@@ -1,0 +1,28 @@
+[package]
+name = "tide"
+version = "1.0.0"
+edition = "2021"
+authors = ["Markus Sommer"]
+description = "🌊 Tide - Refresh your system with the update wave"
+license = "MIT"
+repository = "https://github.com/markussommer/tide"
+keywords = ["macos", "update", "maintenance", "automation", "cli"]
+categories = ["command-line-utilities"]
+
+[dependencies]
+clap = { version = "4.5", features = ["derive"] }
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+anyhow = "1.0"
+thiserror = "1.0"
+dirs = "5.0"
+which = "6.0"
+shellexpand = "3.1"
+colored = "2.1"
+indicatif = "0.17"
+dialoguer = "0.11"
+crossterm = "0.28"
+tokio = { version = "1.41", features = ["full"] }
+futures = "0.3"
+chrono = "0.4"
+reqwest = { version = "0.12", features = ["blocking"] }

@@ -1,0 +1,1058 @@
+use anyhow::{Context, Result};
+use clap::Parser;
+use colored::*;
+use dialoguer::{theme::ColorfulTheme, Confirm, Password};
+use dirs;
+use futures::future::join_all;
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use serde::{Deserialize, Serialize};
+use shellexpand;
+use std::collections::HashMap;
+use std::fs;
+use std::io::{self};
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+use thiserror::Error;
+use tokio::sync::Semaphore;
+use which::which;
+
+// 🎯 Custom Error Types
+#[derive(Error, Debug)]
+enum UpdaterError {
+    #[error("Configuration error: {0}")]
+    Config(String),
+    #[error("Task execution failed: {0}")]
+    TaskFailed(String),
+    #[error("IO error: {0}")]
+    Io(#[from] io::Error),
+    #[error("Command not found: {0}")]
+    CommandNotFound(String),
+}
+
+// 📝 CLI Arguments
+#[derive(Parser, Debug)]
+#[command(name = "tide")]
+#[command(about = "🌊 Tide - Refresh your system with the update wave", long_about = None)]
+struct Args {
+    /// Run in quiet mode (no banner, minimal output)
+    #[arg(short, long)]
+    quiet: bool,
+
+    /// Run in dry-run mode (show what would be executed)
+    #[arg(short = 'n', long)]
+    dry_run: bool,
+
+    /// Run specific groups only (comma-separated)
+    #[arg(short, long, value_delimiter = ',')]
+    groups: Option<Vec<String>>,
+
+    /// Skip specific groups (comma-separated)
+    #[arg(short = 'x', long, value_delimiter = ',')]
+    skip_groups: Option<Vec<String>>,
+
+    /// Maximum parallel tasks (default: 4)
+    #[arg(short = 'j', long, default_value = "4")]
+    parallel: usize,
+
+    /// Config file path (default: ~/.config/tide/config.toml)
+    #[arg(short, long)]
+    config: Option<PathBuf>,
+
+    /// Generate default config and exit
+    #[arg(long)]
+    init: bool,
+
+    /// List all configured tasks and exit
+    #[arg(short, long)]
+    list: bool,
+
+    /// Force run without confirmations
+    #[arg(short, long)]
+    force: bool,
+
+    /// Enable verbose output
+    #[arg(short, long)]
+    verbose: bool,
+
+    /// Show version information
+    #[arg(short = 'V', long)]
+    version: bool,
+}
+
+// 📝 Config Structures
+#[derive(Debug, Deserialize, Serialize)]
+struct Config {
+    #[serde(default)]
+    settings: Settings,
+    #[serde(default)]
+    groups: Vec<TaskGroup>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct Settings {
+    #[serde(default = "default_true")]
+    show_banner: bool,
+    #[serde(default = "default_true")]
+    show_weather: bool,
+    #[serde(default = "default_true")]
+    show_system_info: bool,
+    #[serde(default = "default_false")]
+    show_progress: bool,
+    #[serde(default = "default_false")]
+    parallel_execution: bool,
+    #[serde(default = "default_parallel_limit")]
+    parallel_limit: usize,
+    #[serde(default = "default_false")]
+    skip_optional_on_error: bool,
+    #[serde(default)]
+    keychain_label: Option<String>,
+    #[serde(default = "default_true")]
+    use_colors: bool,
+    #[serde(default = "default_false")]
+    verbose: bool,
+    #[serde(default)]
+    log_file: Option<String>,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            show_banner: true,
+            show_weather: true,
+            show_system_info: true,
+            show_progress: true,
+            parallel_execution: false,
+            parallel_limit: 4,
+            skip_optional_on_error: false,
+            keychain_label: Some("tide-sudo".to_string()),
+            use_colors: true,
+            verbose: false,
+            log_file: None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct TaskGroup {
+    name: String,
+    #[serde(default)]
+    icon: String,
+    #[serde(default = "default_true")]
+    enabled: bool,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    parallel: bool,
+    #[serde(default)]
+    tasks: Vec<TaskConfig>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+struct TaskConfig {
+    name: String,
+    #[serde(default)]
+    icon: String,
+    command: Vec<String>,
+    #[serde(default = "default_true")]
+    required: bool,
+    #[serde(default = "default_false")]
+    sudo: bool,
+    #[serde(default = "default_true")]
+    enabled: bool,
+    #[serde(default)]
+    check_command: Option<String>,
+    #[serde(default)]
+    check_path: Option<String>,
+    #[serde(default)]
+    description: String,
+    #[serde(default)]
+    timeout: Option<u64>,
+    #[serde(default)]
+    env: HashMap<String, String>,
+    #[serde(default)]
+    working_dir: Option<String>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_false() -> bool {
+    false
+}
+
+fn default_parallel_limit() -> usize {
+    4
+}
+
+// 🎯 Task Executor
+struct TaskExecutor {
+    multi_progress: MultiProgress,
+    dry_run: bool,
+    verbose: bool,
+}
+
+impl TaskExecutor {
+    fn new(dry_run: bool, verbose: bool) -> Self {
+        Self {
+            multi_progress: MultiProgress::new(),
+            dry_run,
+            verbose,
+        }
+    }
+
+    async fn execute_task(
+        &self,
+        task: TaskConfig,
+        group_name: String,
+        pb: ProgressBar,
+        keychain_label: &str,
+    ) -> TaskResult {
+        let start = Instant::now();
+        let task_name = format!("{} {}", task.icon, task.name);
+
+        // Update progress bar
+        pb.set_message(format!("{} Running...", task_name));
+
+        if self.dry_run {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            pb.finish_with_message(format!("{} [DRY RUN]", task_name));
+            return TaskResult {
+                name: task.name,
+                group: group_name,
+                status: TaskStatus::Skipped,
+                duration: start.elapsed(),
+                output: Some("Dry run - command not executed".to_string()),
+            };
+        }
+
+        // Check preconditions
+        if let Some(check_cmd) = &task.check_command {
+            if which(check_cmd).is_err() {
+                pb.finish_with_message(format!(
+                    "{} {}",
+                    task_name,
+                    "[SKIP: command not found]".dimmed()
+                ));
+                return TaskResult {
+                    name: task.name,
+                    group: group_name,
+                    status: TaskStatus::Skipped,
+                    duration: start.elapsed(),
+                    output: Some(format!("Command '{}' not found", check_cmd)),
+                };
+            }
+        }
+
+        if let Some(check_path) = &task.check_path {
+            let expanded = shellexpand::tilde(check_path);
+            if !Path::new(expanded.as_ref()).exists() {
+                pb.finish_with_message(format!(
+                    "{} {}",
+                    task_name,
+                    "[SKIP: path not found]".dimmed()
+                ));
+                return TaskResult {
+                    name: task.name,
+                    group: group_name,
+                    status: TaskStatus::Skipped,
+                    duration: start.elapsed(),
+                    output: Some(format!("Path '{}' not found", check_path)),
+                };
+            }
+        }
+
+        // Build command
+        let mut cmd = task.command.clone();
+        if task.sudo && !cmd.is_empty() && cmd[0] != "sudo" {
+            cmd.insert(0, "sudo".to_string());
+        }
+
+        // Execute command
+        let result = if cmd.get(0).map(|s| s.as_str()) == Some("sudo") {
+            self.run_sudo_command(&cmd[1..], keychain_label).await
+        } else {
+            self.run_command(&cmd, &task).await
+        };
+
+        let (status, output) = match result {
+            Ok(output) => (TaskStatus::Success, Some(output)),
+            Err(e) if task.required => (TaskStatus::Failed, Some(e.to_string())),
+            Err(e) => (TaskStatus::Skipped, Some(e.to_string())),
+        };
+
+        let duration = start.elapsed();
+        let status_icon = match status {
+            TaskStatus::Success => "✓".green(),
+            TaskStatus::Failed => "✗".red(),
+            TaskStatus::Skipped => "○".yellow(),
+        };
+
+        pb.finish_with_message(format!(
+            "{} {} {}",
+            task_name,
+            status_icon,
+            format_duration(duration).dimmed()
+        ));
+
+        TaskResult {
+            name: task.name,
+            group: group_name,
+            status,
+            duration,
+            output,
+        }
+    }
+
+    async fn run_command(&self, cmd: &[String], task: &TaskConfig) -> Result<String> {
+        if cmd.is_empty() {
+            return Err(anyhow::anyhow!("Empty command"));
+        }
+
+        let mut command = Command::new(&cmd[0]);
+        command.args(&cmd[1..]);
+
+        // Set working directory if specified
+        if let Some(dir) = &task.working_dir {
+            let expanded = shellexpand::tilde(dir);
+            command.current_dir(expanded.as_ref());
+        }
+
+        // Set environment variables
+        for (key, value) in &task.env {
+            command.env(key, value);
+        }
+
+        if !self.verbose {
+            command.stdout(Stdio::piped()).stderr(Stdio::piped());
+        }
+
+        let output = command.output()?;
+
+        if output.status.success() {
+            Ok(String::from_utf8_lossy(&output.stdout).to_string())
+        } else {
+            Err(anyhow::anyhow!(
+                "Command failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ))
+        }
+    }
+
+    async fn run_sudo_command(&self, args: &[String], keychain_label: &str) -> Result<String> {
+        // Helper to actually execute the sudo command once authentication timestamp is valid.
+        fn run_actual(args: &[String]) -> Result<String> {
+            let output = Command::new("sudo")
+                .args(args)
+                .output()
+                .context("Failed to execute sudo command")?;
+            if output.status.success() {
+                Ok(String::from_utf8_lossy(&output.stdout).to_string())
+            } else {
+                Err(anyhow::anyhow!(
+                    "Command failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                ))
+            }
+        }
+
+        // 1. If sudo timestamp is already cached, just run the command.
+        if Command::new("sudo")
+            .arg("-n")
+            .arg("true")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
+            return run_actual(args);
+        }
+
+        // 2. Try keychain password (if stored) to refresh sudo timestamp.
+        if let Ok(password) = get_keychain_password(keychain_label) {
+            if authenticate_sudo(&password).await? {
+                // Timestamp refreshed; execute command.
+                return run_actual(args);
+            }
+        }
+
+        // 3. Prompt user for password (single attempt; could be extended to retries if desired).
+        let password = Password::with_theme(&ColorfulTheme::default())
+            .with_prompt("Enter sudo password")
+            .interact()?;
+
+        if !authenticate_sudo(&password).await? {
+            return Err(anyhow::anyhow!("Failed to authenticate sudo"));
+        }
+
+        // 4. Optionally save password into keychain if not present.
+        if !keychain_entry_exists(keychain_label) {
+            if Confirm::with_theme(&ColorfulTheme::default())
+                .with_prompt("Save password to keychain for future use?")
+                .default(true)
+                .interact()?
+            {
+                save_keychain_password(keychain_label, &password)?;
+            }
+        }
+
+        // 5. Run command now that sudo timestamp is valid.
+        run_actual(args)
+    }
+}
+
+#[derive(Debug)]
+struct TaskResult {
+    name: String,
+    group: String,
+    status: TaskStatus,
+    duration: Duration,
+    output: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TaskStatus {
+    Success,
+    Failed,
+    Skipped,
+}
+
+// 🔐 Keychain helpers
+fn keychain_entry_exists(label: &str) -> bool {
+    Command::new("security")
+        .args(&["find-generic-password", "-s", label, "-a", "root"])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+fn get_keychain_password(label: &str) -> Result<String> {
+    let output = Command::new("security")
+        .args(&["find-generic-password", "-s", label, "-a", "root", "-w"])
+        .output()?;
+
+    if output.status.success() {
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    } else {
+        Err(anyhow::anyhow!("Keychain entry not found"))
+    }
+}
+
+fn save_keychain_password(label: &str, password: &str) -> Result<()> {
+    let status = Command::new("security")
+        .args(&[
+            "add-generic-password",
+            "-s",
+            label,
+            "-a",
+            "root",
+            "-l",
+            label,
+            "-w",
+            password,
+            "-T",
+            "/usr/bin/security",
+        ])
+        .status()?;
+
+    if status.success() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("Failed to save password to keychain"))
+    }
+}
+
+async fn authenticate_sudo(password: &str) -> Result<bool> {
+    use std::process::Stdio;
+    use tokio::io::AsyncWriteExt;
+    use tokio::process::Command;
+
+    let mut child = Command::new("sudo")
+        .arg("-S")
+        .arg("-v")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin.write_all(password.as_bytes()).await?;
+        stdin.write_all(b"\n").await?;
+    }
+
+    let status = child.wait().await?;
+    Ok(status.success())
+}
+
+// 🎨 UI Helpers
+fn print_banner() {
+    let banner = r#"
+╔═══════════════════════════════════════════════════════════╗
+║                                                           ║
+║     ████████╗██╗██████╗ ███████╗                          ║
+║     ╚══██╔══╝██║██╔══██╗██╔════╝                          ║
+║        ██║   ██║██║  ██║█████╗                            ║
+║        ██║   ██║██║  ██║██╔══╝                            ║
+║        ██║   ██║██████╔╝███████╗                          ║
+║        ╚═╝   ╚═╝╚═════╝ ╚══════╝                          ║
+║                                                           ║
+║        🌊  Refresh your system with the update wave       ║
+║                         v1.0.0                            ║
+╚═══════════════════════════════════════════════════════════╝"#;
+
+    println!("{}", banner.bright_cyan());
+}
+
+fn display_system_info() -> Result<()> {
+    println!("\n{}", "📊 System Information".bright_blue().bold());
+    println!("{}", "─".repeat(60).dimmed());
+
+    // Disk space
+    if let Ok(output) = Command::new("df").args(&["-h", "/"]).output() {
+        if output.status.success() {
+            let info = String::from_utf8_lossy(&output.stdout);
+            if let Some(line) = info.lines().nth(1) {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 5 {
+                    let percent: i32 = parts[4].trim_end_matches('%').parse().unwrap_or(0);
+                    let (icon, color) = if percent > 90 {
+                        ("⚠️ ", "red")
+                    } else if percent > 75 {
+                        ("⚡", "yellow")
+                    } else {
+                        ("✅", "green")
+                    };
+
+                    println!(
+                        "  {} Disk: {} free ({}% used)",
+                        icon,
+                        parts[3].bright_white(),
+                        parts[4].color(color)
+                    );
+                }
+            }
+        }
+    }
+
+    // Battery status
+    if let Ok(output) = Command::new("pmset").args(&["-g", "batt"]).output() {
+        if output.status.success() {
+            let info = String::from_utf8_lossy(&output.stdout);
+            if let Some(line) = info.lines().nth(1) {
+                if let Some(pct_start) = line.find(char::is_numeric) {
+                    if let Some(pct_end) = line[pct_start..].find('%') {
+                        let pct = &line[pct_start..pct_start + pct_end];
+                        let status = if line.contains("charging") {
+                            "charging ⚡".yellow()
+                        } else if line.contains("charged") {
+                            "charged ✅".green()
+                        } else {
+                            "battery 🔋".normal()
+                        };
+                        println!("  🔋 Power: {}% {}", pct.bright_white(), status);
+                    }
+                }
+            }
+        }
+    }
+
+    // macOS version
+    if let Ok(output) = Command::new("sw_vers").arg("-productVersion").output() {
+        if output.status.success() {
+            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            println!("  🍎 macOS: {}", version.bright_white());
+        }
+    }
+
+    // Uptime
+    if let Ok(output) = Command::new("uptime").output() {
+        if output.status.success() {
+            let uptime = String::from_utf8_lossy(&output.stdout);
+            if let Some(up_pos) = uptime.find("up ") {
+                let up_str = &uptime[up_pos + 3..];
+                if let Some(comma_pos) = up_str.find(',') {
+                    println!("  ⏱️  Uptime: {}", up_str[..comma_pos].bright_white());
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+async fn get_weather() -> Option<String> {
+    let response = reqwest::blocking::get("https://wttr.in?format=%l:+%c+%t+%w+%h")
+        .ok()?
+        .text()
+        .ok()?;
+
+    if !response.is_empty() && !response.contains("Unknown") {
+        Some(response.trim().to_string())
+    } else {
+        None
+    }
+}
+
+fn format_duration(duration: Duration) -> String {
+    if duration.as_secs() >= 60 {
+        format!(
+            "{}m {:02}s",
+            duration.as_secs() / 60,
+            duration.as_secs() % 60
+        )
+    } else if duration.as_secs() >= 1 {
+        format!("{:.1}s", duration.as_secs_f32())
+    } else {
+        format!("{}ms", duration.as_millis())
+    }
+}
+
+// 📁 Config Management
+fn load_config(path: Option<&PathBuf>) -> Result<Config> {
+    let config_path = if let Some(p) = path {
+        p.clone()
+    } else {
+        dirs::config_dir()
+            .context("Could not determine config directory")?
+            .join("tide")
+            .join("config.toml")
+    };
+
+    if !config_path.exists() {
+        return Err(anyhow::anyhow!(
+            "Config file not found at: {}\nRun with --init to create default config",
+            config_path.display()
+        ));
+    }
+
+    let content = fs::read_to_string(&config_path)
+        .with_context(|| format!("Failed to read config from {}", config_path.display()))?;
+
+    toml::from_str(&content).context("Failed to parse config file")
+}
+
+fn create_default_config() -> Config {
+    Config {
+        settings: Settings::default(),
+        groups: vec![
+            TaskGroup {
+                name: "System Updates".to_string(),
+                icon: "🍎".to_string(),
+                enabled: true,
+                description: "macOS system updates".to_string(),
+                parallel: false,
+                tasks: vec![TaskConfig {
+                    name: "macOS Updates".to_string(),
+                    icon: "".to_string(),
+                    command: vec![
+                        "softwareupdate".to_string(),
+                        "--install".to_string(),
+                        "--all".to_string(),
+                    ],
+                    required: true,
+                    sudo: true,
+                    enabled: true,
+                    check_command: Some("softwareupdate".to_string()),
+                    check_path: None,
+                    description: "Install all available macOS updates".to_string(),
+                    timeout: Some(3600),
+                    env: HashMap::new(),
+                    working_dir: None,
+                }],
+            },
+            TaskGroup {
+                name: "Package Managers".to_string(),
+                icon: "📦".to_string(),
+                enabled: true,
+                description: "Package manager updates".to_string(),
+                parallel: false,
+                tasks: vec![TaskConfig {
+                    name: "Homebrew Update".to_string(),
+                    icon: "🍺".to_string(),
+                    command: vec!["brew".to_string(), "update".to_string()],
+                    required: true,
+                    sudo: false,
+                    enabled: true,
+                    check_command: Some("brew".to_string()),
+                    check_path: None,
+                    description: "Update Homebrew package definitions".to_string(),
+                    timeout: Some(300),
+                    env: HashMap::new(),
+                    working_dir: None,
+                }],
+            },
+        ],
+    }
+}
+
+fn init_config(path: Option<&PathBuf>) -> Result<()> {
+    let config_dir = if let Some(p) = path {
+        p.parent().unwrap().to_path_buf()
+    } else {
+        dirs::config_dir()
+            .context("Could not determine config directory")?
+            .join("tide")
+    };
+
+    fs::create_dir_all(&config_dir)?;
+    let config_path = config_dir.join("config.toml");
+
+    if config_path.exists() {
+        if !Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt("Config file already exists. Overwrite?")
+            .default(false)
+            .interact()?
+        {
+            return Ok(());
+        }
+    }
+
+    let default_config = create_default_config();
+    let toml_str = toml::to_string_pretty(&default_config)?;
+    fs::write(&config_path, toml_str)?;
+
+    println!(
+        "✅ Config file created at: {}",
+        config_path.display().to_string().green()
+    );
+    Ok(())
+}
+
+fn list_tasks(config: &Config, args: &Args) {
+    println!("\n{}", "📋 Configured Tasks".bright_blue().bold());
+    println!("{}", "═".repeat(60).dimmed());
+
+    for group in &config.groups {
+        if !group.enabled {
+            continue;
+        }
+
+        // Check if group should be shown based on filters
+        if let Some(ref groups) = args.groups {
+            if !groups.contains(&group.name) {
+                continue;
+            }
+        }
+        if let Some(ref skip) = args.skip_groups {
+            if skip.contains(&group.name) {
+                continue;
+            }
+        }
+
+        println!(
+            "\n{} {} {}",
+            group.icon,
+            group.name.bright_white().bold(),
+            if group.parallel {
+                "[parallel]".yellow()
+            } else {
+                "".normal()
+            }
+        );
+
+        if !group.description.is_empty() {
+            println!("  {}", group.description.dimmed());
+        }
+
+        for task in &group.tasks {
+            if !task.enabled {
+                continue;
+            }
+
+            let status = if task
+                .check_command
+                .as_ref()
+                .map_or(true, |cmd| which(cmd).is_ok())
+            {
+                "✓".green()
+            } else {
+                "✗".red()
+            };
+
+            let required = if task.required {
+                "[required]".red()
+            } else {
+                "[optional]".yellow()
+            };
+
+            println!(
+                "  {} {} {} {} {}",
+                status,
+                task.icon,
+                task.name.bright_white(),
+                required,
+                if task.sudo {
+                    "[sudo]".cyan()
+                } else {
+                    "".normal()
+                }
+            );
+
+            if args.verbose && !task.description.is_empty() {
+                println!("      {}", task.description.dimmed());
+            }
+        }
+    }
+    println!();
+}
+
+// 🚀 Main execution
+#[tokio::main]
+async fn main() -> Result<()> {
+    let args = Args::parse();
+
+    // Handle version
+    if args.version {
+        println!("tide v1.0.0");
+        return Ok(());
+    }
+
+    // Handle init
+    if args.init {
+        return init_config(args.config.as_ref());
+    }
+
+    // Check OS
+    if std::env::consts::OS != "macos" {
+        eprintln!("{}", "❌ This tool is for macOS only!".red().bold());
+        std::process::exit(1);
+    }
+
+    // Load config
+    let config = load_config(args.config.as_ref())?;
+
+    // Handle list
+    if args.list {
+        list_tasks(&config, &args);
+        return Ok(());
+    }
+
+    // Setup environment
+    setup_environment();
+
+    // Show banner
+    if !args.quiet && config.settings.show_banner {
+        print_banner();
+    }
+
+    // Build task list
+    let mut all_tasks = Vec::new();
+    for group in &config.groups {
+        if !group.enabled {
+            continue;
+        }
+
+        // Apply group filters
+        if let Some(ref groups) = args.groups {
+            if !groups.contains(&group.name) {
+                continue;
+            }
+        }
+        if let Some(ref skip) = args.skip_groups {
+            if skip.contains(&group.name) {
+                continue;
+            }
+        }
+
+        for task in &group.tasks {
+            if task.enabled {
+                all_tasks.push((task.clone(), group.name.clone(), group.parallel));
+            }
+        }
+    }
+
+    if all_tasks.is_empty() {
+        println!("{}", "No tasks to run!".yellow());
+        return Ok(());
+    }
+
+    // Show summary and confirm
+    if !args.force && !args.quiet {
+        println!(
+            "\n{}",
+            format!("📦 Ready to run {} tasks", all_tasks.len()).bright_blue()
+        );
+
+        if args.dry_run {
+            println!("{}", "🔸 DRY RUN MODE - No changes will be made".yellow());
+        }
+
+        if !Confirm::with_theme(&ColorfulTheme::default())
+            .with_prompt("Continue?")
+            .default(true)
+            .interact()?
+        {
+            println!("{}", "Cancelled by user".yellow());
+            return Ok(());
+        }
+    }
+
+    // Execute tasks
+    let executor = TaskExecutor::new(args.dry_run, args.verbose || config.settings.verbose);
+    let start_time = Instant::now();
+    let mut results = Vec::new();
+
+    let keychain_label = config
+        .settings
+        .keychain_label
+        .as_deref()
+        .unwrap_or("tide-sudo");
+
+    // Group tasks by execution mode
+    let mut sequential_tasks = Vec::new();
+    let mut parallel_tasks = Vec::new();
+
+    for (task, group, is_parallel) in all_tasks {
+        if is_parallel || (config.settings.parallel_execution && !task.sudo) {
+            parallel_tasks.push((task, group));
+        } else {
+            sequential_tasks.push((task, group));
+        }
+    }
+
+    // Execute sequential tasks
+    for (task, group) in sequential_tasks {
+        let pb = executor.multi_progress.add(ProgressBar::new_spinner());
+        pb.set_style(
+            ProgressStyle::default_spinner()
+                .template("{spinner:.cyan} {msg}")
+                .unwrap(),
+        );
+
+        let result = executor.execute_task(task, group, pb, keychain_label).await;
+
+        if result.status == TaskStatus::Failed && config.settings.skip_optional_on_error {
+            println!(
+                "{}",
+                "⚠️  Skipping remaining optional tasks due to failure".yellow()
+            );
+            break;
+        }
+
+        results.push(result);
+    }
+
+    // Execute parallel tasks
+    if !parallel_tasks.is_empty() {
+        let semaphore = Arc::new(Semaphore::new(
+            args.parallel.min(config.settings.parallel_limit),
+        ));
+        let mut handles = Vec::new();
+
+        for (task, group) in parallel_tasks {
+            let pb = executor.multi_progress.add(ProgressBar::new_spinner());
+            pb.set_style(
+                ProgressStyle::default_spinner()
+                    .template("{spinner:.cyan} {msg}")
+                    .unwrap(),
+            );
+
+            let executor_clone = Arc::new(executor);
+            let semaphore_clone = semaphore.clone();
+            let keychain_label = keychain_label.to_string();
+
+            let handle = tokio::spawn(async move {
+                let _permit = semaphore_clone.acquire().await.unwrap();
+                executor_clone
+                    .execute_task(task, group, pb, &keychain_label)
+                    .await
+            });
+
+            handles.push(handle);
+        }
+
+        let parallel_results = join_all(handles).await;
+        for result in parallel_results {
+            if let Ok(task_result) = result {
+                results.push(task_result);
+            }
+        }
+    }
+
+    // Display results
+    let total_duration = start_time.elapsed();
+    display_results(&results, total_duration);
+
+    // Show system info
+    if !args.quiet && config.settings.show_system_info {
+        display_system_info()?;
+    }
+
+    // Show weather
+    if !args.quiet && config.settings.show_weather {
+        if let Some(weather) = get_weather().await {
+            println!("\n☁️  {}", weather.bright_cyan());
+        }
+    }
+
+    Ok(())
+}
+
+fn display_results(results: &[TaskResult], total_duration: Duration) {
+    let success = results
+        .iter()
+        .filter(|r| r.status == TaskStatus::Success)
+        .count();
+    let failed = results
+        .iter()
+        .filter(|r| r.status == TaskStatus::Failed)
+        .count();
+    let skipped = results
+        .iter()
+        .filter(|r| r.status == TaskStatus::Skipped)
+        .count();
+
+    println!("\n{}", "📊 Summary".bright_blue().bold());
+    println!("{}", "─".repeat(60).dimmed());
+
+    println!(
+        "  {} Success  {} Failed  {} Skipped  ⏱️  Total: {}",
+        format!("✓ {}", success).green(),
+        format!("✗ {}", failed).red(),
+        format!("○ {}", skipped).yellow(),
+        format_duration(total_duration).bright_white()
+    );
+
+    if failed > 0 {
+        println!("\n{}", "Failed tasks:".red().bold());
+        for result in results.iter().filter(|r| r.status == TaskStatus::Failed) {
+            println!("  ✗ {} - {}", result.name.red(), result.group.dimmed());
+            if let Some(output) = &result.output {
+                if !output.is_empty() {
+                    println!("    {}", output.dimmed());
+                }
+            }
+        }
+    }
+}
+
+fn setup_environment() {
+    // Setup PATH for Homebrew
+    if Path::new("/opt/homebrew/bin/brew").exists() {
+        let path = std::env::var("PATH").unwrap_or_default();
+        // SAFETY: Updating process environment PATH here is intentional and done early before other concurrent env access.
+        unsafe {
+            std::env::set_var("PATH", format!("/opt/homebrew/bin:{}", path));
+        }
+    } else if Path::new("/usr/local/bin/brew").exists() {
+        let path = std::env::var("PATH").unwrap_or_default();
+        // SAFETY: See note above.
+        unsafe {
+            std::env::set_var("PATH", format!("/usr/local/bin:{}", path));
+        }
+    }
+
+    // Add user local bin
+    if let Some(home) = dirs::home_dir() {
+        let path = std::env::var("PATH").unwrap_or_default();
+        // SAFETY: See note above.
+        unsafe {
+            std::env::set_var("PATH", format!("{}/.local/bin:{}", home.display(), path));
+        }
+    }
+}

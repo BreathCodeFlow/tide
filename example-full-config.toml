@@ -1,0 +1,590 @@
+# Tide v1.0 - Full Configuration
+# 🌊 Refresh your system with the update wave
+# Location: ~/.config/tide/config.toml
+
+[settings]
+show_banner = true             # Show ASCII banner at startup
+show_weather = true            # Show weather info at the end
+show_system_info = true        # Show system stats (disk, battery, etc.)
+show_progress = true           # Show progress bars for tasks
+parallel_execution = false     # Enable parallel execution globally
+parallel_limit = 4             # Max number of parallel tasks
+skip_optional_on_error = false # Skip optional tasks if a required task fails
+keychain_label = "tide-sudo"   # For storing sudo password in keychain
+use_colors = true              # Enable colored output
+verbose = false                # Show detailed output
+log_file = ""                  # Optional: Path to log file
+
+# ============================================================================
+# SYSTEM & CORE UPDATES
+# ============================================================================
+
+[[groups]]
+name = "System Updates"
+icon = "🍎"
+description = "Core macOS system and app store updates"
+enabled = true
+parallel = false                                        # System updates should run sequentially
+
+[[groups.tasks]]
+name = "macOS Updates"
+description = "Install all available macOS system updates"
+command = ["softwareupdate", "--install", "--all"]
+required = true
+sudo = true
+enabled = true
+check_command = "softwareupdate"
+timeout = 3600                                             # 1 hour timeout
+
+[[groups.tasks]]
+name = "App Store"
+icon = "🏬"
+description = "Update all Mac App Store applications"
+command = ["mas", "upgrade"]
+required = true
+sudo = false
+enabled = true
+check_command = "mas"
+timeout = 600
+
+# ============================================================================
+# HOMEBREW PACKAGE MANAGER
+# ============================================================================
+
+[[groups]]
+name = "Homebrew"
+icon = "🍺"
+description = "Homebrew package manager updates and maintenance"
+enabled = true
+parallel = false                                                 # Homebrew tasks need sequential execution
+
+[[groups.tasks]]
+name = "Update Formulae"
+description = "Update Homebrew package definitions"
+command = ["brew", "update"]
+required = true
+sudo = false
+enabled = true
+check_command = "brew"
+timeout = 300
+
+[[groups.tasks]]
+name = "Upgrade Packages"
+icon = "📦"
+description = "Upgrade all outdated packages"
+command = ["brew", "upgrade"]
+required = true
+sudo = false
+enabled = true
+check_command = "brew"
+timeout = 1200
+
+[[groups.tasks]]
+name = "Upgrade Casks"
+icon = "🧊"
+description = "Upgrade all GUI applications"
+command = ["brew", "upgrade", "--cask"]
+required = true
+sudo = false
+enabled = true
+check_command = "brew"
+timeout = 1200
+
+[[groups.tasks]]
+name = "Brewfile Sync"
+icon = "📋"
+description = "Install packages from Brewfile"
+command = ["brew", "bundle", "--file=~/.Brewfile"]
+required = false
+sudo = false
+enabled = true
+check_command = "brew"
+check_path = "~/.Brewfile"
+timeout = 600
+
+[[groups.tasks]]
+name = "Cleanup"
+icon = "🗑️"
+description = "Remove old versions and clear cache"
+command = ["brew", "cleanup", "--prune=30"]
+required = true
+sudo = false
+enabled = true
+check_command = "brew"
+timeout = 300
+
+# ============================================================================
+# PROGRAMMING LANGUAGES & RUNTIMES
+# ============================================================================
+
+[[groups]]
+name = "Programming Languages"
+icon = "💻"
+description = "Update programming language runtimes and tools"
+enabled = true
+parallel = true                                                # Language updates can run in parallel
+
+[[groups.tasks]]
+name = "Rust Toolchain"
+icon = "🦀"
+description = "Update Rust compiler and tools"
+command = ["rustup", "update"]
+required = false
+sudo = false
+enabled = true
+check_command = "rustup"
+timeout = 600
+
+[[groups.tasks]]
+name = "Cargo Packages"
+icon = "📦"
+description = "Update globally installed Cargo packages"
+command = ["cargo", "install-update", "-a"]
+required = false
+sudo = false
+enabled = true
+check_command = "cargo-install-update"
+timeout = 900
+
+[[groups.tasks]]
+name = "Node.js (fnm)"
+icon = "🟢"
+description = "Install latest LTS Node.js version"
+command = ["fnm", "install", "--lts"]
+required = false
+sudo = false
+enabled = true
+check_command = "fnm"
+timeout = 300
+
+[[groups.tasks]]
+name = "Node.js (nvm)"
+icon = "🟢"
+description = "Install latest Node.js with nvm"
+command = [
+    "bash",
+    "-c",
+    "source ~/.nvm/nvm.sh && nvm install node --latest-npm",
+]
+required = false
+sudo = false
+enabled = false # Disabled by default (use fnm OR nvm, not both)
+check_path = "~/.nvm/nvm.sh"
+timeout = 300
+
+[[groups.tasks]]
+name = "Python (pyenv)"
+icon = "🐍"
+description = "Install latest Python 3.13"
+command = ["pyenv", "install", "--skip-existing", "3.13:latest"]
+required = false
+sudo = false
+enabled = true
+check_command = "pyenv"
+timeout = 900
+
+[[groups.tasks]]
+name = "Bun Runtime"
+icon = "🥟"
+description = "Update Bun JavaScript runtime"
+command = ["bun", "upgrade"]
+required = false
+sudo = false
+enabled = true
+check_command = "bun"
+timeout = 300
+
+[[groups.tasks]]
+name = "Go Tools"
+icon = "🐹"
+description = "Update Go development tools"
+command = ["go", "install", "-v", "golang.org/x/tools/...@latest"]
+required = false
+sudo = false
+enabled = true
+check_command = "go"
+timeout = 600
+
+# ============================================================================
+# PACKAGE MANAGERS & TOOLS
+# ============================================================================
+
+[[groups]]
+name = "Package Managers"
+icon = "📦"
+description = "Update various package managers and their global packages"
+enabled = true
+parallel = true                                                           # These can run independently
+
+[[groups.tasks]]
+name = "pipx Packages"
+icon = "🐍"
+description = "Update all pipx-installed Python applications"
+command = ["pipx", "upgrade-all"]
+required = false
+sudo = false
+enabled = true
+check_command = "pipx"
+timeout = 600
+
+[[groups.tasks]]
+name = "Composer"
+icon = "🎻"
+description = "Update global PHP packages"
+command = ["composer", "global", "update", "--no-interaction"]
+required = false
+sudo = false
+enabled = true
+check_command = "composer"
+timeout = 600
+
+[groups.tasks.env]
+COMPOSER_MEMORY_LIMIT = "-1"
+
+[[groups.tasks]]
+name = "Ruby Gems"
+icon = "💎"
+description = "Update Ruby gems"
+command = ["gem", "update", "--system"]
+required = false
+sudo = false
+enabled = true
+check_command = "gem"
+timeout = 300
+
+# ============================================================================
+# SYSTEM CLEANUP & MAINTENANCE
+# ============================================================================
+
+[[groups]]
+name = "System Cleanup"
+icon = "🧹"
+description = "Clean up system files and free disk space"
+enabled = true
+parallel = false                                          # Cleanup should be sequential
+
+[[groups.tasks]]
+name = "Empty Trash"
+icon = "🗑️"
+description = "Empty user and system trash"
+command = [
+    "sh",
+    "-c",
+    "rm -rf ~/.Trash/* 2>/dev/null; sudo rm -rf /.Trashes/* 2>/dev/null || true",
+]
+required = false
+sudo = true
+enabled = true
+timeout = 60
+
+[[groups.tasks]]
+name = "Clear User Caches"
+icon = "💾"
+description = "Remove user cache files"
+command = [
+    "sh",
+    "-c",
+    "find ~/Library/Caches -mindepth 1 -maxdepth 1 -type d -exec rm -rf {} + 2>/dev/null || true",
+]
+required = false
+sudo = false
+enabled = true
+timeout = 120
+
+[[groups.tasks]]
+name = "Old User Logs"
+icon = "📋"
+description = "Remove user logs older than 30 days"
+command = [
+    "find",
+    "~/Library/Logs",
+    "-name",
+    "*.log",
+    "-mtime",
+    "+30",
+    "-delete",
+]
+required = false
+sudo = false
+enabled = true
+check_path = "~/Library/Logs"
+timeout = 60
+
+[[groups.tasks]]
+name = "Old System Logs"
+icon = "📋"
+description = "Remove system logs older than 30 days"
+command = [
+    "find",
+    "/Library/Logs",
+    "-name",
+    "*.log",
+    "-mtime",
+    "+30",
+    "-delete",
+]
+required = false
+sudo = true
+enabled = true
+timeout = 60
+
+[[groups.tasks]]
+name = "Flush DNS Cache"
+icon = "🌐"
+description = "Clear DNS resolver cache"
+command = ["dscacheutil", "-flushcache"]
+required = false
+sudo = true
+enabled = true
+timeout = 10
+
+[[groups.tasks]]
+name = "Kill DNS Responder"
+icon = "🌐"
+description = "Restart mDNSResponder service"
+command = ["killall", "-HUP", "mDNSResponder"]
+required = false
+sudo = true
+enabled = true
+timeout = 10
+
+[[groups.tasks]]
+name = "Thin Time Machine"
+icon = "⏰"
+description = "Thin local Time Machine snapshots"
+command = ["tmutil", "thinlocalsnapshots", "/", "9999999999", "4"]
+required = false
+sudo = true
+enabled = true
+check_command = "tmutil"
+timeout = 300
+
+# ============================================================================
+# DEVELOPER CACHE CLEANUP
+# ============================================================================
+
+[[groups]]
+name = "Developer Caches"
+icon = "🔧"
+description = "Clean up development tool caches to free disk space"
+enabled = true
+parallel = true                                                     # Cache cleanups can run in parallel
+
+[[groups.tasks]]
+name = "npm Cache"
+icon = "📗"
+description = "Clear npm package cache"
+command = ["npm", "cache", "clean", "--force"]
+required = false
+sudo = false
+enabled = true
+check_command = "npm"
+timeout = 120
+
+[[groups.tasks]]
+name = "Yarn Cache"
+icon = "📘"
+description = "Clear Yarn package cache"
+command = ["yarn", "cache", "clean"]
+required = false
+sudo = false
+enabled = true
+check_command = "yarn"
+timeout = 120
+
+[[groups.tasks]]
+name = "pnpm Store"
+icon = "📙"
+description = "Prune pnpm store"
+command = ["pnpm", "store", "prune"]
+required = false
+sudo = false
+enabled = true
+check_command = "pnpm"
+timeout = 120
+
+[[groups.tasks]]
+name = "pip Cache"
+icon = "🐍"
+description = "Purge pip download cache"
+command = ["python3", "-m", "pip", "cache", "purge"]
+required = false
+sudo = false
+enabled = true
+check_command = "python3"
+timeout = 60
+
+[[groups.tasks]]
+name = "Cargo Cache"
+icon = "🦀"
+description = "Clean Cargo build cache"
+command = ["cargo", "cache", "-a"]
+required = false
+sudo = false
+enabled = true
+check_command = "cargo-cache"
+timeout = 180
+
+[[groups.tasks]]
+name = "Go Module Cache"
+icon = "🐹"
+description = "Clean Go module cache"
+command = ["go", "clean", "-modcache"]
+required = false
+sudo = false
+enabled = true
+check_command = "go"
+timeout = 120
+
+# ============================================================================
+# DOCKER & CONTAINERS
+# ============================================================================
+
+[[groups]]
+name = "Docker"
+icon = "🐳"
+description = "Docker system maintenance and cleanup"
+enabled = true
+parallel = false
+
+[[groups.tasks]]
+name = "System Prune"
+icon = "🗑️"
+description = "Remove all unused containers, networks, images"
+command = ["docker", "system", "prune", "-af", "--volumes"]
+required = false
+sudo = false
+enabled = true
+check_command = "docker"
+timeout = 300
+
+[[groups.tasks]]
+name = "Remove Dangling Images"
+icon = "🖼️"
+description = "Remove untagged images"
+command = ["docker", "image", "prune", "-f"]
+required = false
+sudo = false
+enabled = true
+check_command = "docker"
+timeout = 120
+
+# ============================================================================
+# XCODE & IOS DEVELOPMENT
+# ============================================================================
+
+[[groups]]
+name = "Xcode"
+icon = "🛠️"
+description = "Xcode and iOS development cleanup"
+enabled = true
+parallel = true
+
+[[groups.tasks]]
+name = "Derived Data"
+icon = "🔨"
+description = "Clear Xcode derived data"
+command = ["rm", "-rf", "~/Library/Developer/Xcode/DerivedData/*"]
+required = false
+sudo = false
+enabled = true
+check_command = "xcodebuild"
+timeout = 120
+
+[[groups.tasks]]
+name = "iOS DeviceSupport"
+icon = "📱"
+description = "Clean old iOS device support files"
+command = [
+    "sh",
+    "-c",
+    "find ~/Library/Developer/Xcode/iOS\\ DeviceSupport -mindepth 1 -maxdepth 1 -type d -mtime +30 -exec rm -rf {} + 2>/dev/null || true",
+]
+required = false
+sudo = false
+enabled = true
+check_command = "xcodebuild"
+timeout = 120
+
+[[groups.tasks]]
+name = "Simulators"
+icon = "📲"
+description = "Delete unavailable simulators"
+command = ["xcrun", "simctl", "delete", "unavailable"]
+required = false
+sudo = false
+enabled = true
+check_command = "xcrun"
+timeout = 60
+
+[[groups.tasks]]
+name = "Archives"
+icon = "📦"
+description = "Clean old Xcode archives (older than 60 days)"
+command = [
+    "find",
+    "~/Library/Developer/Xcode/Archives",
+    "-mindepth 1",
+    "-maxdepth 1",
+    "-mtime",
+    "+60",
+    "-exec",
+    "rm",
+    "-rf",
+    "{}",
+    "+",
+]
+required = false
+sudo = false
+enabled = true
+check_path = "~/Library/Developer/Xcode/Archives"
+timeout = 120
+
+# ============================================================================
+# CUSTOM TASKS (Examples)
+# ============================================================================
+
+[[groups]]
+name = "Custom Scripts"
+icon = "⚙️"
+description = "User-defined custom update scripts"
+enabled = false                                    # Disabled by default - enable if needed
+parallel = true
+
+[[groups.tasks]]
+name = "Dotfiles Sync"
+icon = "📄"
+description = "Pull latest dotfiles from git"
+command = ["git", "-C", "~/.dotfiles", "pull", "--rebase"]
+required = false
+sudo = false
+enabled = true
+check_path = "~/.dotfiles/.git"
+timeout = 60
+
+[[groups.tasks]]
+name = "Vim Plugins"
+icon = "📝"
+description = "Update Vim/Neovim plugins"
+command = ["nvim", "--headless", "+PlugUpdate", "+qa"]
+required = false
+sudo = false
+enabled = true
+check_command = "nvim"
+timeout = 300
+
+[[groups.tasks]]
+name = "Custom Backup"
+icon = "💾"
+description = "Run custom backup script"
+command = ["~/scripts/backup.sh"]
+required = false
+sudo = false
+enabled = false
+check_path = "~/scripts/backup.sh"
+timeout = 1800
+working_dir = "~"
+
+[groups.tasks.env]
+BACKUP_DESTINATION = "/Volumes/Backup"
+BACKUP_VERBOSE = "1"
