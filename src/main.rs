@@ -7,11 +7,10 @@ mod ui;
 
 use anyhow::Result;
 use clap::Parser;
-use colored::*;
+use colored::Colorize;
 use dialoguer::{theme::ColorfulTheme, Confirm};
 use dirs;
 use futures::future::join_all;
-use indicatif::{ProgressBar, ProgressStyle};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -35,14 +34,22 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     }
 
-    let config = Config::load(args.config.as_ref())?;
+    let config_path = Config::resolve_path(args.config.as_ref())?;
+    let config = Config::load(Some(&config_path))?;
 
     if args.list {
         list_tasks(&config, &args);
+        display_config_path(&config_path)?;
         return Ok(());
     }
 
     setup_environment();
+
+    let weather_task = if !args.quiet && config.settings.show_weather {
+        Some(tokio::spawn(ui::fetch_weather()))
+    } else {
+        None
+    };
 
     if !args.quiet && config.settings.show_banner {
         ui::print_banner();
@@ -67,7 +74,12 @@ async fn main() -> Result<()> {
 
         for task in &group.tasks {
             if task.enabled {
-                all_tasks.push((task.clone(), group.name.clone(), group.parallel));
+                all_tasks.push((
+                    task.clone(),
+                    group.name.clone(),
+                    group.icon.clone(),
+                    group.parallel,
+                ));
             }
         }
     }
@@ -97,7 +109,10 @@ async fn main() -> Result<()> {
         }
     }
 
-    let executor = TaskExecutor::new(args.dry_run, args.verbose || config.settings.verbose);
+    let executor = Arc::new(TaskExecutor::new(
+        args.dry_run,
+        args.verbose || config.settings.verbose,
+    ));
     let start_time = Instant::now();
     let mut results = Vec::new();
 
@@ -110,23 +125,19 @@ async fn main() -> Result<()> {
     let mut sequential_tasks = Vec::new();
     let mut parallel_tasks = Vec::new();
 
-    for (task, group, is_parallel) in all_tasks {
+    for (task, group, group_icon, is_parallel) in all_tasks {
         if is_parallel || (config.settings.parallel_execution && !task.sudo) {
-            parallel_tasks.push((task, group));
+            parallel_tasks.push((task, group, group_icon));
         } else {
-            sequential_tasks.push((task, group));
+            sequential_tasks.push((task, group, group_icon));
         }
     }
 
-    for (task, group) in sequential_tasks {
-        let pb = executor.multi_progress.add(ProgressBar::new_spinner());
-        pb.set_style(
-            ProgressStyle::default_spinner()
-                .template("{spinner:.cyan} {msg}")
-                .unwrap(),
-        );
-
-        let result = executor.execute_task(task, group, pb, keychain_label).await;
+    for (task, group, group_icon) in sequential_tasks {
+        let pb = executor.new_spinner();
+        let result = executor
+            .execute_task(task, group, group_icon, pb, keychain_label)
+            .await;
 
         if result.status == TaskStatus::Failed && config.settings.skip_optional_on_error {
             println!(
@@ -143,25 +154,20 @@ async fn main() -> Result<()> {
         let semaphore = Arc::new(Semaphore::new(
             args.parallel.min(config.settings.parallel_limit),
         ));
-        let executor_arc = Arc::new(executor);
         let mut handles = Vec::new();
 
-        for (task, group) in parallel_tasks {
-            let pb = executor_arc.multi_progress.add(ProgressBar::new_spinner());
-            pb.set_style(
-                ProgressStyle::default_spinner()
-                    .template("{spinner:.cyan} {msg}")
-                    .unwrap(),
-            );
-
-            let executor_clone = Arc::clone(&executor_arc);
+        for (task, group, group_icon) in parallel_tasks {
+            let executor_clone = Arc::clone(&executor);
             let semaphore_clone = Arc::clone(&semaphore);
             let keychain_label = keychain_label.to_string();
+            let group_clone = group.clone();
+            let icon_clone = group_icon.clone();
 
             let handle = tokio::spawn(async move {
                 let _permit = semaphore_clone.acquire().await.unwrap();
+                let pb = executor_clone.new_spinner();
                 executor_clone
-                    .execute_task(task, group, pb, &keychain_label)
+                    .execute_task(task, group_clone, icon_clone, pb, &keychain_label)
                     .await
             });
 
@@ -183,10 +189,23 @@ async fn main() -> Result<()> {
         ui::display_system_info()?;
     }
 
-    if !args.quiet && config.settings.show_weather {
-        ui::display_weather().await;
+    if let Some(handle) = weather_task {
+        let status = match handle.await {
+            Ok(status) => status,
+            Err(err) => ui::WeatherStatus::Error(format!("Runtime error: {err}")),
+        };
+        ui::render_weather(status);
     }
 
+    Ok(())
+}
+
+fn display_config_path(path: &Path) -> Result<()> {
+    println!(
+        "{} {}",
+        "Using config file:".bright_blue().bold(),
+        path.display()
+    );
     Ok(())
 }
 
@@ -320,10 +339,21 @@ fn display_results(results: &[TaskResult], total_duration: Duration) {
         format_duration(total_duration).bright_white()
     );
 
+    if let Some(longest_task) = results.iter().max_by_key(|r| r.duration) {
+        let group_label = format_group_display(&longest_task.group, &longest_task.group_icon);
+        println!(
+            "  Longest task: {} [{} in {}]",
+            format_duration(longest_task.duration).bright_white(),
+            longest_task.name.bright_white(),
+            group_label.dimmed()
+        );
+    }
+
     if failed > 0 {
         println!("\n{}", "Failed tasks:".red().bold());
         for result in results.iter().filter(|r| r.status == TaskStatus::Failed) {
-            println!("  ✗ {} - {}", result.name.red(), result.group.dimmed());
+            let group_label = format_group_display(&result.group, &result.group_icon);
+            println!("  ✗ {} - {}", result.name.red(), group_label.dimmed());
             if let Some(output) = &result.output {
                 if !output.is_empty() {
                     println!("    {}", output.dimmed());
@@ -354,5 +384,14 @@ fn format_duration(d: Duration) -> String {
         format!("{}s", secs)
     } else {
         format!("{}m {}s", secs / 60, secs % 60)
+    }
+}
+
+fn format_group_display(name: &str, icon: &str) -> String {
+    let icon = icon.trim();
+    if icon.is_empty() {
+        name.to_string()
+    } else {
+        format!("{} {}", icon, name)
     }
 }

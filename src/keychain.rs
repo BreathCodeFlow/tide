@@ -36,8 +36,6 @@ pub fn save_password(label: &str, password: &str) -> Result<()> {
             "root",
             "-w",
             password,
-            "-T",
-            "/usr/bin/sudo",
         ])
         .status()?;
 

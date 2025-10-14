@@ -1,22 +1,29 @@
 use anyhow::Result;
-use colored::*;
+use colored::Colorize;
 use std::process::Command;
+use std::time::Duration;
+
+const DIVIDER_WIDTH: usize = 60;
 
 /// Print the Tide banner
 pub fn print_banner() {
-    let banner = r#"
+    let version = env!("CARGO_PKG_VERSION");
+    let banner = format!(
+        r#"
 ╔═══════════════════════════════════════════════════════════╗
 ║                                                           ║
-║     ████████╗██╗██████╗ ███████╗                          ║
-║     ╚══██╔══╝██║██╔══██╗██╔════╝                          ║
-║        ██║   ██║██║  ██║█████╗                            ║
-║        ██║   ██║██║  ██║██╔══╝                            ║
-║        ██║   ██║██████╔╝███████╗                          ║
-║        ╚═╝   ╚═╝╚═════╝ ╚══════╝                          ║
+║               ████████╗██╗██████╗ ███████╗                ║
+║               ╚══██╔══╝██║██╔══██╗██╔════╝                ║
+║                  ██║   ██║██║  ██║█████╗                  ║
+║                  ██║   ██║██║  ██║██╔══╝                  ║
+║                  ██║   ██║██████╔╝███████╗                ║
+║                  ╚═╝   ╚═╝╚═════╝ ╚══════╝                ║
 ║                                                           ║
 ║        🌊  Refresh your system with the update wave       ║
-║                         v1.0.0                            ║
-╚═══════════════════════════════════════════════════════════╝"#;
+║                        v{:>8}                           ║
+╚═══════════════════════════════════════════════════════════╝"#,
+        version
+    );
 
     println!("{}", banner.bright_cyan());
 }
@@ -24,7 +31,7 @@ pub fn print_banner() {
 /// Display system information
 pub fn display_system_info() -> Result<()> {
     println!("\n{}", "📊 System Information".bright_blue().bold());
-    println!("{}", "─".repeat(60).dimmed());
+    println!("{}", "─".repeat(DIVIDER_WIDTH).dimmed());
 
     // Disk space
     if let Ok(output) = Command::new("df").args(&["-h", "/"]).output() {
@@ -90,25 +97,65 @@ pub fn display_system_info() -> Result<()> {
     Ok(())
 }
 
-/// Fetch and display weather information
-pub async fn get_weather() -> Option<String> {
-    let response = reqwest::blocking::get("https://wttr.in?format=%l:+%c+%t+%w+%h")
-        .ok()?
-        .text()
-        .ok()?;
+/// Result of a weather lookup
+#[derive(Debug)]
+pub enum WeatherStatus {
+    Available(String),
+    NoData(&'static str),
+    Error(String),
+}
 
-    if !response.is_empty() && !response.contains("Unknown") {
-        Some(response.trim().to_string())
+/// Fetch weather information with a short timeout
+pub async fn fetch_weather() -> WeatherStatus {
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .user_agent(format!("tide-cli/{}", env!("CARGO_PKG_VERSION")))
+        .build()
+    {
+        Ok(client) => client,
+        Err(err) => return WeatherStatus::Error(format!("HTTP client failed: {err}")),
+    };
+
+    let response = match client
+        .get("https://wttr.in")
+        .query(&[("format", "%l: %c %t %w %h")])
+        .header("Accept", "text/plain")
+        .header("Cache-Control", "no-cache")
+        .send()
+        .await
+    {
+        Ok(response) => response,
+        Err(err) => return WeatherStatus::Error(format!("Request error: {err}")),
+    };
+
+    if !response.status().is_success() {
+        return WeatherStatus::Error(format!("Service returned status {}", response.status()));
+    }
+
+    let body = match response.text().await {
+        Ok(text) => text,
+        Err(err) => return WeatherStatus::Error(format!("Response decode error: {err}")),
+    };
+
+    let trimmed = body.trim();
+    if trimmed.is_empty() || trimmed.contains("Unknown") {
+        WeatherStatus::NoData("Weather data currently unavailable.")
     } else {
-        None
+        WeatherStatus::Available(trimmed.to_string())
     }
 }
 
 /// Display weather information
-pub async fn display_weather() {
-    if let Some(weather) = get_weather().await {
-        println!("\n{}", "🌤️  Weather".bright_blue().bold());
-        println!("{}", "─".repeat(60).dimmed());
-        println!("  {}", weather.bright_white());
+pub fn render_weather(status: WeatherStatus) {
+    println!("\n{}", "🌤️  Weather".bright_blue().bold());
+    println!("{}", "─".repeat(DIVIDER_WIDTH).dimmed());
+
+    match status {
+        WeatherStatus::Available(summary) => println!("  {}", summary.bright_white()),
+        WeatherStatus::NoData(message) => println!("  {}", message.dimmed()),
+        WeatherStatus::Error(reason) => println!(
+            "  {}",
+            format!("Unable to fetch weather data ({reason}).").dimmed()
+        ),
     }
 }

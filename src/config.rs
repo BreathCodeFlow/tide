@@ -1,8 +1,9 @@
+use crate::error::TideError;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// Main configuration structure
 #[derive(Debug, Deserialize, Serialize)]
@@ -114,19 +115,25 @@ fn default_parallel_limit() -> usize {
 }
 
 impl Config {
+    /// Resolve the path that should be used for the configuration file
+    pub fn resolve_path(path: Option<&PathBuf>) -> Result<PathBuf> {
+        if let Some(p) = path {
+            Ok(p.clone())
+        } else {
+            Self::default_config_path()
+        }
+    }
+
     /// Load configuration from file or use default path
     pub fn load(path: Option<&PathBuf>) -> Result<Self> {
-        let config_path = if let Some(p) = path {
-            p.clone()
-        } else {
-            Self::default_config_path()?
-        };
+        let config_path = Self::resolve_path(path)?;
 
         if !config_path.exists() {
-            anyhow::bail!(
+            return Err(TideError::Config(format!(
                 "Config file not found: {}\nRun 'tide --init' to create one.",
                 config_path.display()
-            );
+            ))
+            .into());
         }
 
         let contents = fs::read_to_string(&config_path).context(format!(

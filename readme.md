@@ -1,283 +1,206 @@
-# 🌊 Tide v1.0
+# 🌊 Tide
 
-**Refresh your system with the update wave**
+**An opinionated macOS maintenance orchestrator with an `iocraft`-powered interface.**
 
-Ein modernes, hochperformantes macOS System Update Tool mit paralleler Ausführung, Progress-Tracking und umfangreicher Konfiguration.
+Tide coordinates macOS software updates, Homebrew cleanups, and any custom shell tasks you describe in TOML. The new UI layer is rendered with [`iocraft`](https://crates.io/crates/iocraft), so every run delivers consistent colors, typography, and layout without hand-rolled ANSI escape codes.
 
-> 🌊 Wie die Gezeiten kommt Tide regelmäßig, erfrischt dein System und hält alles aktuell - automatisch, zuverlässig und elegant.
+## Contents
 
-## ✨ Features
+- [Highlights](#highlights)
+- [Requirements](#requirements)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Usage](#usage)
+- [Configuration](#configuration)
+- [Examples](#examples)
+- [UI Tour](#ui-tour)
+- [Development](#development)
+- [License](#license)
 
-### Core Features
+## Highlights
 
-- **📦 Parallele Task-Ausführung** - Führe unabhängige Tasks gleichzeitig aus
-- **📊 Live Progress Bars** - Visuelles Feedback mit `indicatif`
-- **🎨 Beautiful CLI** - Farbige Ausgabe mit `colored` und `crossterm`
-- **🔐 Keychain Integration** - Sichere Passwort-Speicherung
-- **📝 TOML Configuration** - Übersichtliche, erweiterbare Config
-- **🏃 Async/Await** - Moderne async Rust mit `tokio`
-- **⚡ Smart Preconditions** - Tasks nur ausführen wenn nötig
-- **🛡️ Robust Error Handling** - Mit `anyhow` und `thiserror`
+### Automation
 
-### CLI Features
+- **Concurrent or sequential execution** – Flag a group as parallel and Tide fans out workers while respecting global limits.
+- **Smart preconditions** – Skip tasks when binaries or paths are missing instead of failing your whole run.
+- **Keychain-aware sudo** – Refresh authentication automatically and optionally store credentials in the macOS Keychain.
+- **Async core** – Built on Tokio to keep prompts responsive while commands execute.
+- **Declarative config** – TOML groups capture commands, timeouts, environment overrides, and conditional checks.
 
-- **Dry-Run Mode** - Teste ohne Änderungen
-- **Group Filtering** - Führe nur bestimmte Gruppen aus
-- **Task Listing** - Zeige alle konfigurierten Tasks
-- **Verbose Mode** - Detaillierte Ausgabe
-- **Force Mode** - Überspringe Bestätigungen
+### Interface (powered by `iocraft`)
 
-## 📦 Dependencies
+- **Consistent theming** – All banners, headings, and summaries are rendered by `iocraft`, keeping colors and typography uniform.
+- **Modern progress spinners** – Unicode dot spinners decorate every task with group context and live status updates.
+- **Detailed summary** – Color-coded output highlights successes, skips, failures, and the longest-running task.
+- **Context cards** – Optional system stats and weather reports render in matching `iocraft` layouts without blocking completion.
 
-Das Script nutzt moderne Rust-Libraries für maximale Performance und Wartbarkeit:
+### Safety
 
-```toml
-clap = "4.5"          # CLI argument parsing
-serde = "1.0"         # Serialization
-toml = "0.8"          # Config format
-anyhow = "1.0"        # Error handling
-thiserror = "1.0"     # Custom errors
-dirs = "5.0"          # Platform directories
-which = "6.0"         # Command detection
-shellexpand = "3.1"   # Path expansion
-colored = "2.1"       # Terminal colors
-indicatif = "0.17"    # Progress bars
-dialoguer = "0.11"    # Interactive prompts
-crossterm = "0.28"    # Terminal control
-tokio = "1.41"        # Async runtime
-chrono = "0.4"        # Date/time
-reqwest = "0.12"      # HTTP client
-```
+- Dry-run mode to preview commands with zero side effects.
+- Optional fail-fast behaviour that halts optional work after a required task fails.
+- Verbose logging for debugging plus quiet mode for automation owners.
 
-## 🚀 Installation
+## Requirements
 
-### From Source
+- macOS (tested on Apple Silicon; Intel should work as long as the commands you call are available).
+- Rust 1.76+ to build from source.
+- Any tooling you invoke in your configuration (Homebrew, `mas`, `rustup`, etc.).
+
+## Installation
 
 ```bash
-# Clone repository
 git clone https://github.com/markussommer/tide
 cd tide
 
-# Build release binary
 cargo build --release
-
-# Install to system
-sudo cp target/release/tide /usr/local/bin/
-
-# Config initialisieren
-tide --init
-
-# Config anpassen
-nano ~/.config/tide/config.toml
+sudo install -m755 target/release/tide /usr/local/bin/tide
 ```
 
-### Quick Start
+Remove the installed binary to uninstall.
+
+## Quick Start
 
 ```bash
-# Nach der Installation
-tide --init          # Erstelle Konfiguration
-tide --list          # Zeige verfügbare Tasks
-tide                 # Führe Updates aus
+tide --init          # Scaffold ~/.config/tide/config.toml
+tide --list          # Inspect groups and tasks with styled output
+tide                 # Run interactively with confirmations
+tide --dry-run       # Preview without executing commands
+tide --force         # Skip prompts for unattended automation
 ```
 
-## 📝 Usage
+## Usage
+
+Core CLI options:
+
+- `--groups <A,B>` – Only run the listed groups.
+- `--skip-groups <A,B>` – Exclude specific groups.
+- `--parallel <N>` – Override the global worker limit (default 4).
+- `--quiet` – Suppress banner, system info, and weather.
+- `--verbose` – Print task descriptions and full command lines.
+- `--dry-run` – Simulate all tasks without side effects.
+- `--force` – Skip the interactive confirmation step.
+
+Example workflow:
 
 ```bash
-# Normale Ausführung
-tide
-
-# Dry-run (keine Änderungen)
-tide --dry-run
-
-# Nur bestimmte Gruppen
-tide --groups "Homebrew,System Updates"
-
-# Gruppen überspringen
-tide --skip-groups "Developer Caches"
-
-# Alle Tasks anzeigen
-tide --list
-
-# Verbose mit Details
-tide --verbose --list
-
-# Parallel mit 8 Workers
-tide --parallel 8
-
-# Quiet mode (minimal output)
-tide --quiet
-
-# Force ohne Bestätigung
-tide --force
+tide --groups "System Updates,Homebrew" --parallel 6 --force
 ```
 
-## ⚙️ Configuration
+## Configuration
 
-### Settings Section
+Tide reads `~/.config/tide/config.toml` by default (override with `--config`). Generate a starter file with `tide --init`, then tailor it. At a high level:
 
 ```toml
 [settings]
-show_banner = true                  # ASCII banner anzeigen
-show_weather = true                 # Wetter-Info am Ende
-show_system_info = true             # System-Stats anzeigen
-show_progress = true                # Progress bars anzeigen
-parallel_execution = false          # Parallele Ausführung aktivieren
-parallel_limit = 4                  # Max parallele Tasks
-skip_optional_on_error = false      # Optionale Tasks bei Fehler überspringen
-keychain_label = "tide-sudo"        # Keychain Label für sudo
-use_colors = true                   # Farbige Ausgabe
-verbose = false                     # Detaillierte Ausgabe
-log_file = "/path/to/log.txt"       # Optional: Log-Datei
-```
+show_banner = true
+show_weather = true
+show_system_info = true
+show_progress = true
+parallel_execution = false
+parallel_limit = 4
+skip_optional_on_error = false
+keychain_label = "tide-sudo"
+verbose = false
+log_file = ""                  # Optional: capture command output
 
-### Task Groups
-
-```toml
 [[groups]]
-name = "Group Name"
-icon = "🚀"
-description = "Detailed description of this group"
+name = "System Updates"
+icon = "🍎"
+description = "Core macOS updates"
 enabled = true
-parallel = true  # Tasks in dieser Gruppe parallel ausführen
+parallel = false
 
   [[groups.tasks]]
-  name = "Task Name"
-  icon = "📦"                        # Optional: Override group icon
-  description = "What this task does"
-  command = ["cmd", "arg1", "arg2"]
-  required = true                    # Fehler stoppt Ausführung
-  sudo = true                        # Mit sudo ausführen
-  enabled = true                     # Task aktiviert
-  check_command = "brew"             # Nur wenn Command existiert
-  check_path = "~/.config/file"      # Nur wenn Pfad existiert
-  timeout = 300                      # Timeout in Sekunden
-  working_dir = "~/projects"         # Working directory
+  name = "macOS Updates"
+  icon = "🍎"
+  command = ["softwareupdate", "--install", "--all"]
+  description = "Install all available macOS updates"
+  required = true
+  sudo = true
+  check_command = "softwareupdate"
+  timeout = 3600
 
-  # Environment variables für diesen Task
-  [groups.tasks.env]
-  CUSTOM_VAR = "value"
-  PATH = "/custom/path:$PATH"
+  [[groups.tasks]]
+  name = "App Store"
+  icon = "🏬"
+  command = ["mas", "upgrade"]
+  required = true
+  check_command = "mas"
+  timeout = 600
 ```
 
-## 🎯 Advanced Examples
+### Task Fields
 
-### Parallel Development Tools Update
+- `command` – Array form prevents shell quoting issues.
+- `required` – When true, Tide marks the run as failed if the task fails.
+- `sudo` – Tide handles authentication and optional Keychain storage.
+- `enabled` – Toggle tasks on/off without deleting them.
+- `check_command` / `check_path` – Skip tasks automatically when prerequisites are missing.
+- `timeout` – Abort long-running commands (seconds).
+- `env` – Command-specific environment overrides.
+- `working_dir` – Set the working directory (supports `~`).
+
+## Examples
+
+Parallel developer tooling refresh:
 
 ```toml
 [[groups]]
 name = "Development Tools"
 icon = "🛠️"
-description = "Update all development tools in parallel"
-parallel = true  # Alle Tasks dieser Gruppe parallel
+description = "Update core developer toolchains"
+parallel = true
 
   [[groups.tasks]]
-  name = "Rust Update"
+  name = "Rust Toolchain"
+  icon = "🦀"
   command = ["rustup", "update"]
   check_command = "rustup"
 
   [[groups.tasks]]
-  name = "Node Update"
+  name = "Node.js"
+  icon = "🟢"
   command = ["fnm", "install", "--lts"]
   check_command = "fnm"
 
   [[groups.tasks]]
-  name = "Python Update"
+  name = "Python"
+  icon = "🐍"
   command = ["pyenv", "install", "3.13:latest"]
   check_command = "pyenv"
 ```
 
-### Conditional Cleanup Task
+Conditional cleanup:
 
 ```toml
 [[groups.tasks]]
 name = "Clean Old Logs"
-description = "Remove logs older than 30 days"
+icon = "🧹"
 command = ["find", "~/logs", "-mtime", "+30", "-delete"]
 required = false
-check_path = "~/logs"  # Nur wenn logs Ordner existiert
+check_path = "~/logs"
 timeout = 60
 ```
 
-### Task with Custom Environment
+## UI Tour
 
-```toml
-[[groups.tasks]]
-name = "Custom Build"
-command = ["make", "build"]
-working_dir = "~/myproject"
+1. **Banner** – Rendered by `iocraft`, showing the compiled version and consistent cyan theming.
+2. **Progress** – Dot spinners display `[Group ▸ Task]` with colored status icons and elapsed time.
+3. **Summary Table** – Styled rows outline successes, skips, failures, and highlight the longest task.
+4. **Context Cards** – Optional system and weather sections reuse the same `iocraft` primitives for cohesive output.
 
-[groups.tasks.env]
-CC = "clang"
-CFLAGS = "-O3 -march=native"
-BUILD_TYPE = "release"
-```
+Because the UI is declarative, future layout tweaks stay isolated inside the `ui` module—no more scattered ANSI formatting.
 
-## 🔥 Performance Tips
-
-1. **Parallele Ausführung**: Aktiviere `parallel = true` für Gruppen mit unabhängigen Tasks
-2. **Timeout setzen**: Verhindere hängende Tasks mit `timeout`
-3. **Check Commands**: Nutze `check_command` um unnötige Tasks zu überspringen
-4. **Dry Run first**: Teste mit `--dry-run` bevor du produktiv läufst
-
-## 🎨 UI Features
-
-- **Progress Bars**: Live-Updates für jeden Task
-- **Color Coding**:
-  - 🟢 Grün = Success
-  - 🔴 Rot = Failed
-  - 🟡 Gelb = Skipped
-  - 🔵 Blau = Info
-- **System Info Display**: Disk, Battery, macOS Version, Uptime
-- **Weather Integration**: Optional weather display
-- **Interactive Prompts**: Sichere Bestätigungen mit `dialoguer`
-
-## 🔐 Security
-
-- **Keychain Integration**: Sudo-Passwörter sicher in macOS Keychain
-- **No Plain Text Passwords**: Niemals Passwörter in Config
-- **Confirmation Prompts**: Bestätigung vor kritischen Operationen
-
-## 🐛 Debugging
+## Development
 
 ```bash
-# Verbose output
-tide --verbose
-
-# List all tasks with details
-tide --list --verbose
-
-# Dry run to see what would happen
-tide --dry-run
-
-# Check specific group
-tide --groups "Homebrew" --dry-run
+cargo fmt
+cargo clippy --all-targets
+cargo test
 ```
 
-## 📊 Task Status
+The spinner UI relies on `iocraft` for formatting; changes to output should go through the helpers in `src/ui.rs`.
 
-- **Success ✓**: Task erfolgreich ausgeführt
-- **Failed ✗**: Task fehlgeschlagen (stoppt bei `required = true`)
-- **Skipped ○**: Task übersprungen (Bedingung nicht erfüllt oder optional)
+## License
 
-## 🚀 Performance
-
-Das neue System ist **deutlich schneller** als die Original-Version:
-
-- **Parallele Ausführung** spart bis zu 70% Zeit
-- **Async I/O** mit Tokio für non-blocking Operations
-- **Smart Caching** der sudo-Authentifizierung
-- **Conditional Checks** verhindern unnötige Ausführungen
-
-## 💡 Pro Tips
-
-1. **Gruppiere verwandte Tasks** für bessere Organisation
-2. **Nutze parallele Gruppen** für unabhängige Tasks
-3. **Setze Timeouts** für langlaufende Tasks
-4. **Nutze check_command** für bedingte Ausführung
-5. **Teste mit --dry-run** vor produktivem Einsatz
-6. **Aktiviere verbose** für Debugging
-7. **Nutze force mode** für Automation
-
----
-
-**Built with ❤️ and Rust 🦀**
+Tide is released under the MIT License. See [LICENSE](LICENSE) for details.

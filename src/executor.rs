@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use colored::*;
+use colored::Colorize;
 use dialoguer::{theme::ColorfulTheme, Confirm, Password};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use shellexpand;
@@ -16,6 +16,7 @@ use crate::keychain;
 pub struct TaskResult {
     pub name: String,
     pub group: String,
+    pub group_icon: String,
     pub status: TaskStatus,
     pub duration: Duration,
     pub output: Option<String>,
@@ -47,26 +48,52 @@ impl TaskExecutor {
         }
     }
 
+    /// Create a configured spinner progress bar
+    pub fn new_spinner(&self) -> ProgressBar {
+        let pb = self.multi_progress.add(ProgressBar::new_spinner());
+        pb.set_style(
+            ProgressStyle::with_template("{spinner:.cyan} {msg}")
+                .unwrap()
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+        );
+        pb.enable_steady_tick(Duration::from_millis(120));
+        pb
+    }
+
     /// Execute a single task
     pub async fn execute_task(
         &self,
         task: TaskConfig,
         group_name: String,
+        group_icon: String,
         pb: ProgressBar,
         keychain_label: &str,
     ) -> TaskResult {
         let start = Instant::now();
-        let task_name = format!("{} {}", task.icon, task.name);
+        let task_name = task.name.clone();
+        let group_label = format_group_label(&group_name, &group_icon);
+        let task_label = format_task_label(&task_name, &task.icon);
+        let progress_label = format!("[{}] {}", group_label, task_label);
 
         // Update progress bar
-        pb.set_message(format!("{} Running...", task_name));
+        pb.set_message(format!(
+            "{} {}",
+            progress_label.clone().bold(),
+            "Running…".bright_white()
+        ));
 
         if self.dry_run {
             tokio::time::sleep(Duration::from_millis(100)).await;
-            pb.finish_with_message(format!("{} [DRY RUN]", task_name));
+            pb.finish_with_message(format!(
+                "{} {} {}",
+                progress_label.clone().bold(),
+                "○".yellow(),
+                "[dry run]".dimmed()
+            ));
             return TaskResult {
-                name: task.name,
+                name: task_name.clone(),
                 group: group_name,
+                group_icon,
                 status: TaskStatus::Skipped,
                 duration: start.elapsed(),
                 output: Some("Dry run - command not executed".to_string()),
@@ -78,12 +105,13 @@ impl TaskExecutor {
             if !keychain::command_exists(check_cmd) {
                 pb.finish_with_message(format!(
                     "{} {}",
-                    task_name,
-                    "[SKIP: command not found]".dimmed()
+                    progress_label.clone().bold(),
+                    "[skipped: command not found]".dimmed()
                 ));
                 return TaskResult {
-                    name: task.name,
+                    name: task_name.clone(),
                     group: group_name,
+                    group_icon,
                     status: TaskStatus::Skipped,
                     duration: start.elapsed(),
                     output: Some(format!("Command '{}' not found", check_cmd)),
@@ -96,12 +124,13 @@ impl TaskExecutor {
             if !Path::new(expanded.as_ref()).exists() {
                 pb.finish_with_message(format!(
                     "{} {}",
-                    task_name,
-                    "[SKIP: path not found]".dimmed()
+                    progress_label.clone().bold(),
+                    "[skipped: path not found]".dimmed()
                 ));
                 return TaskResult {
-                    name: task.name,
+                    name: task_name.clone(),
                     group: group_name,
+                    group_icon,
                     status: TaskStatus::Skipped,
                     duration: start.elapsed(),
                     output: Some(format!("Path '{}' not found", check_path)),
@@ -137,14 +166,15 @@ impl TaskExecutor {
 
         pb.finish_with_message(format!(
             "{} {} {}",
-            task_name,
+            progress_label.bold(),
             status_icon,
-            format_duration(duration).dimmed()
+            format!("({})", format_duration(duration)).dimmed()
         ));
 
         TaskResult {
-            name: task.name,
+            name: task_name,
             group: group_name,
+            group_icon,
             status,
             duration,
             output,
@@ -279,5 +309,22 @@ fn format_duration(d: Duration) -> String {
         format!("{}s", secs)
     } else {
         format!("{}m {}s", secs / 60, secs % 60)
+    }
+}
+
+fn format_group_label(name: &str, icon: &str) -> String {
+    if icon.trim().is_empty() {
+        name.to_string()
+    } else {
+        format!("{} {}", icon, name)
+    }
+}
+
+fn format_task_label(name: &str, icon: &str) -> String {
+    let icon = icon.trim();
+    if icon.is_empty() {
+        name.to_string()
+    } else {
+        format!("{} {}", icon, name)
     }
 }

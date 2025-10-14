@@ -10,19 +10,19 @@ keywords = ["macos", "update", "maintenance", "automation", "cli"]
 categories = ["command-line-utilities"]
 
 [dependencies]
-clap = { version = "4.5", features = ["derive"] }
-serde = { version = "1.0", features = ["derive"] }
-toml = "0.8"
-anyhow = "1.0"
-thiserror = "1.0"
-dirs = "5.0"
-which = "6.0"
-shellexpand = "3.1"
-colored = "2.1"
-indicatif = "0.17"
-dialoguer = "0.11"
-crossterm = "0.28"
-tokio = { version = "1.41", features = ["full"] }
-futures = "0.3"
-chrono = "0.4"
-reqwest = { version = "0.12", features = ["blocking"] }
+clap = { version = "4.5.49", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
+toml = "0.9.8"
+anyhow = "1.0.100"
+thiserror = "2.0.17"
+dirs = "6.0.0"
+which = "8.0.0"
+shellexpand = "3.1.1"
+colored = "3.0.0"
+indicatif = "0.18.0"
+dialoguer = "0.12.0"
+crossterm = "0.29.0"
+tokio = { version = "1.47.1", features = ["full"] }
+futures = "0.3.31"
+chrono = "0.4.42"
+reqwest = { version = "0.12.24", features = ["blocking"] }
