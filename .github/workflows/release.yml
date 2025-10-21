@@ -113,10 +113,10 @@ jobs:
           sed -i '' "s/version \".*\"/version \"${VERSION}\"/" homebrew-tap/Formula/tide.rb
 
           # Update ARM64 SHA256
-          sed -i '' "s/sha256 \".*\" # aarch64/sha256 \"${AARCH64_SHA}\" # aarch64/" homebrew-tap/Formula/tide.rb
+          sed -i '' "$(printf '10c\\\n      sha256 "%s"' "$AARCH64_SHA")" homebrew-tap/Formula/tide.rb
 
           # Update x86_64 SHA256
-          sed -i '' "s/sha256 \".*\" # x86_64/sha256 \"${X86_64_SHA}\" # x86_64/" homebrew-tap/Formula/tide.rb
+          sed -i '' "$(printf '13c\\\n      sha256 "%s"' "$X86_64_SHA")" homebrew-tap/Formula/tide.rb
 
       - name: Commit and push
         run: |
