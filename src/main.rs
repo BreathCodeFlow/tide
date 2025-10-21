@@ -9,7 +9,7 @@ mod ui;
 use anyhow::Result;
 use clap::Parser;
 use colored::Colorize;
-use dialoguer::{theme::ColorfulTheme, Confirm};
+use dialoguer::{Confirm, theme::ColorfulTheme};
 use futures::future::join_all;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -406,15 +406,21 @@ fn display_results(results: &[TaskResult], total_duration: Duration) {
 fn setup_environment() {
     if Path::new("/opt/homebrew/bin/brew").exists() {
         let path = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("PATH", format!("/opt/homebrew/bin:{}", path));
+        unsafe {
+            std::env::set_var("PATH", format!("/opt/homebrew/bin:{}", path));
+        }
     } else if Path::new("/usr/local/bin/brew").exists() {
         let path = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("PATH", format!("/usr/local/bin:{}", path));
+        unsafe {
+            std::env::set_var("PATH", format!("/usr/local/bin:{}", path));
+        }
     }
 
     if let Some(home) = dirs::home_dir() {
         let path = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("PATH", format!("{}/.local/bin:{}", home.display(), path));
+        unsafe {
+            std::env::set_var("PATH", format!("{}/.local/bin:{}", home.display(), path));
+        }
     }
 }
 
