@@ -1,6 +1,6 @@
 [package]
 name = "tide"
-version = "1.2.1"
+version = "1.2.2"
 edition = "2021"
 authors = ["Markus Sommer"]
 description = "🌊 Tide - Refresh your system with the update wave"
