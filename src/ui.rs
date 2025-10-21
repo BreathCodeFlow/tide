@@ -34,8 +34,8 @@ pub fn display_system_info() -> Result<()> {
     println!("{}", "─".repeat(DIVIDER_WIDTH).dimmed());
 
     // Disk space
-    if let Ok(output) = Command::new("df").args(["-h", "/"]).output() {
-        if output.status.success() {
+    if let Ok(output) = Command::new("df").args(["-h", "/"]).output()
+        && output.status.success() {
             let lines = String::from_utf8_lossy(&output.stdout);
             if let Some(line) = lines.lines().nth(1) {
                 let parts: Vec<&str> = line.split_whitespace().collect();
@@ -49,15 +49,14 @@ pub fn display_system_info() -> Result<()> {
                 }
             }
         }
-    }
 
     // Battery status
-    if let Ok(output) = Command::new("pmset").args(["-g", "batt"]).output() {
-        if output.status.success() {
+    if let Ok(output) = Command::new("pmset").args(["-g", "batt"]).output()
+        && output.status.success() {
             let info = String::from_utf8_lossy(&output.stdout);
-            if let Some(line) = info.lines().nth(1) {
-                if let Some(pct_start) = line.find(char::is_numeric) {
-                    if let Some(pct_end) = line[pct_start..].find('%') {
+            if let Some(line) = info.lines().nth(1)
+                && let Some(pct_start) = line.find(char::is_numeric)
+                    && let Some(pct_end) = line[pct_start..].find('%') {
                         let pct = &line[pct_start..pct_start + pct_end];
                         let status = if line.contains("charging") {
                             "charging ⚡".yellow()
@@ -68,22 +67,18 @@ pub fn display_system_info() -> Result<()> {
                         };
                         println!("  🔋 Power: {}% {}", pct.bright_white(), status);
                     }
-                }
-            }
         }
-    }
 
     // macOS version
-    if let Ok(output) = Command::new("sw_vers").arg("-productVersion").output() {
-        if output.status.success() {
+    if let Ok(output) = Command::new("sw_vers").arg("-productVersion").output()
+        && output.status.success() {
             let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
             println!("  🍎 macOS: {}", version.bright_white());
         }
-    }
 
     // Uptime
-    if let Ok(output) = Command::new("uptime").output() {
-        if output.status.success() {
+    if let Ok(output) = Command::new("uptime").output()
+        && output.status.success() {
             let uptime = String::from_utf8_lossy(&output.stdout);
             if let Some(up_pos) = uptime.find("up ") {
                 let up_str = &uptime[up_pos + 3..];
@@ -92,7 +87,6 @@ pub fn display_system_info() -> Result<()> {
                 }
             }
         }
-    }
 
     Ok(())
 }

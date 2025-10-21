@@ -192,8 +192,8 @@ impl TaskExecutor {
         }
 
         // Check preconditions
-        if let Some(check_cmd) = &task.check_command {
-            if !keychain::command_exists(check_cmd) {
+        if let Some(check_cmd) = &task.check_command
+            && !keychain::command_exists(check_cmd) {
                 pb.finish_with_message(format!(
                     "{} {}",
                     progress_label.clone().bold(),
@@ -208,7 +208,6 @@ impl TaskExecutor {
                     output: Some(format!("Command '{}' not found", check_cmd)),
                 };
             }
-        }
 
         if let Some(check_path) = &task.check_path {
             let expanded = shellexpand::tilde(check_path);
@@ -394,11 +393,10 @@ impl TaskExecutor {
         }
 
         // 2. Try keychain password (if stored) to refresh sudo timestamp.
-        if let Ok(password) = keychain::get_password(keychain_label) {
-            if authenticate_sudo(&password).await? {
+        if let Ok(password) = keychain::get_password(keychain_label)
+            && authenticate_sudo(&password).await? {
                 return run_actual(args);
             }
-        }
 
         // 3. Prompt user for password
         let password = Password::with_theme(&ColorfulTheme::default())

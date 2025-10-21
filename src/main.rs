@@ -61,16 +61,14 @@ async fn main() -> Result<()> {
             continue;
         }
 
-        if let Some(ref groups) = args.groups {
-            if !groups.contains(&group.name) {
+        if let Some(ref groups) = args.groups
+            && !groups.contains(&group.name) {
                 continue;
             }
-        }
-        if let Some(ref skip) = args.skip_groups {
-            if skip.contains(&group.name) {
+        if let Some(ref skip) = args.skip_groups
+            && skip.contains(&group.name) {
                 continue;
             }
-        }
 
         for task in &group.tasks {
             if task.enabled {
@@ -289,16 +287,14 @@ fn list_tasks(config: &Config, args: &Args) {
     println!("{}", "═".repeat(60).bright_blue());
 
     for group in &config.groups {
-        if let Some(ref groups) = args.groups {
-            if !groups.contains(&group.name) {
+        if let Some(ref groups) = args.groups
+            && !groups.contains(&group.name) {
                 continue;
             }
-        }
-        if let Some(ref skip) = args.skip_groups {
-            if skip.contains(&group.name) {
+        if let Some(ref skip) = args.skip_groups
+            && skip.contains(&group.name) {
                 continue;
             }
-        }
 
         let enabled_icon = if group.enabled {
             "✓".green()
@@ -394,11 +390,10 @@ fn display_results(results: &[TaskResult], total_duration: Duration) {
         for result in results.iter().filter(|r| r.status == TaskStatus::Failed) {
             let group_label = format_group_display(&result.group, &result.group_icon);
             println!("  ✗ {} - {}", result.name.red(), group_label.dimmed());
-            if let Some(output) = &result.output {
-                if !output.is_empty() {
+            if let Some(output) = &result.output
+                && !output.is_empty() {
                     println!("    {}", output.dimmed());
                 }
-            }
         }
     }
 }
