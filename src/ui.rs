@@ -35,58 +35,63 @@ pub fn display_system_info() -> Result<()> {
 
     // Disk space
     if let Ok(output) = Command::new("df").args(["-h", "/"]).output()
-        && output.status.success() {
-            let lines = String::from_utf8_lossy(&output.stdout);
-            if let Some(line) = lines.lines().nth(1) {
-                let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 5 {
-                    println!(
-                        "  💾 Disk: {} used of {} ({})",
-                        parts[2].bright_white(),
-                        parts[1].bright_white(),
-                        parts[4].bright_yellow()
-                    );
-                }
+        && output.status.success()
+    {
+        let lines = String::from_utf8_lossy(&output.stdout);
+        if let Some(line) = lines.lines().nth(1) {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 5 {
+                println!(
+                    "  💾 Disk: {} used of {} ({})",
+                    parts[2].bright_white(),
+                    parts[1].bright_white(),
+                    parts[4].bright_yellow()
+                );
             }
         }
+    }
 
     // Battery status
     if let Ok(output) = Command::new("pmset").args(["-g", "batt"]).output()
-        && output.status.success() {
-            let info = String::from_utf8_lossy(&output.stdout);
-            if let Some(line) = info.lines().nth(1)
-                && let Some(pct_start) = line.find(char::is_numeric)
-                    && let Some(pct_end) = line[pct_start..].find('%') {
-                        let pct = &line[pct_start..pct_start + pct_end];
-                        let status = if line.contains("charging") {
-                            "charging ⚡".yellow()
-                        } else if line.contains("charged") {
-                            "charged ✅".green()
-                        } else {
-                            "battery 🔋".normal()
-                        };
-                        println!("  🔋 Power: {}% {}", pct.bright_white(), status);
-                    }
+        && output.status.success()
+    {
+        let info = String::from_utf8_lossy(&output.stdout);
+        if let Some(line) = info.lines().nth(1)
+            && let Some(pct_start) = line.find(char::is_numeric)
+            && let Some(pct_end) = line[pct_start..].find('%')
+        {
+            let pct = &line[pct_start..pct_start + pct_end];
+            let status = if line.contains("charging") {
+                "charging ⚡".yellow()
+            } else if line.contains("charged") {
+                "charged ✅".green()
+            } else {
+                "battery 🔋".normal()
+            };
+            println!("  🔋 Power: {}% {}", pct.bright_white(), status);
         }
+    }
 
     // macOS version
     if let Ok(output) = Command::new("sw_vers").arg("-productVersion").output()
-        && output.status.success() {
-            let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            println!("  🍎 macOS: {}", version.bright_white());
-        }
+        && output.status.success()
+    {
+        let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        println!("  🍎 macOS: {}", version.bright_white());
+    }
 
     // Uptime
     if let Ok(output) = Command::new("uptime").output()
-        && output.status.success() {
-            let uptime = String::from_utf8_lossy(&output.stdout);
-            if let Some(up_pos) = uptime.find("up ") {
-                let up_str = &uptime[up_pos + 3..];
-                if let Some(comma_pos) = up_str.find(',') {
-                    println!("  ⏱️  Uptime: {}", up_str[..comma_pos].bright_white());
-                }
+        && output.status.success()
+    {
+        let uptime = String::from_utf8_lossy(&output.stdout);
+        if let Some(up_pos) = uptime.find("up ") {
+            let up_str = &uptime[up_pos + 3..];
+            if let Some(comma_pos) = up_str.find(',') {
+                println!("  ⏱️  Uptime: {}", up_str[..comma_pos].bright_white());
             }
         }
+    }
 
     Ok(())
 }

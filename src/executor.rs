@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use colored::Colorize;
-use dialoguer::{theme::ColorfulTheme, Confirm, Password};
+use dialoguer::{Confirm, Password, theme::ColorfulTheme};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -193,21 +193,22 @@ impl TaskExecutor {
 
         // Check preconditions
         if let Some(check_cmd) = &task.check_command
-            && !keychain::command_exists(check_cmd) {
-                pb.finish_with_message(format!(
-                    "{} {}",
-                    progress_label.clone().bold(),
-                    "[skipped: command not found]".dimmed()
-                ));
-                return TaskResult {
-                    name: task_name.clone(),
-                    group: group_name,
-                    group_icon,
-                    status: TaskStatus::Skipped,
-                    duration: start.elapsed(),
-                    output: Some(format!("Command '{}' not found", check_cmd)),
-                };
-            }
+            && !keychain::command_exists(check_cmd)
+        {
+            pb.finish_with_message(format!(
+                "{} {}",
+                progress_label.clone().bold(),
+                "[skipped: command not found]".dimmed()
+            ));
+            return TaskResult {
+                name: task_name.clone(),
+                group: group_name,
+                group_icon,
+                status: TaskStatus::Skipped,
+                duration: start.elapsed(),
+                output: Some(format!("Command '{}' not found", check_cmd)),
+            };
+        }
 
         if let Some(check_path) = &task.check_path {
             let expanded = shellexpand::tilde(check_path);
@@ -394,9 +395,10 @@ impl TaskExecutor {
 
         // 2. Try keychain password (if stored) to refresh sudo timestamp.
         if let Ok(password) = keychain::get_password(keychain_label)
-            && authenticate_sudo(&password).await? {
-                return run_actual(args);
-            }
+            && authenticate_sudo(&password).await?
+        {
+            return run_actual(args);
+        }
 
         // 3. Prompt user for password
         let password = Password::with_theme(&ColorfulTheme::default())

@@ -62,13 +62,15 @@ async fn main() -> Result<()> {
         }
 
         if let Some(ref groups) = args.groups
-            && !groups.contains(&group.name) {
-                continue;
-            }
+            && !groups.contains(&group.name)
+        {
+            continue;
+        }
         if let Some(ref skip) = args.skip_groups
-            && skip.contains(&group.name) {
-                continue;
-            }
+            && skip.contains(&group.name)
+        {
+            continue;
+        }
 
         for task in &group.tasks {
             if task.enabled {
@@ -288,13 +290,15 @@ fn list_tasks(config: &Config, args: &Args) {
 
     for group in &config.groups {
         if let Some(ref groups) = args.groups
-            && !groups.contains(&group.name) {
-                continue;
-            }
+            && !groups.contains(&group.name)
+        {
+            continue;
+        }
         if let Some(ref skip) = args.skip_groups
-            && skip.contains(&group.name) {
-                continue;
-            }
+            && skip.contains(&group.name)
+        {
+            continue;
+        }
 
         let enabled_icon = if group.enabled {
             "✓".green()
@@ -391,9 +395,10 @@ fn display_results(results: &[TaskResult], total_duration: Duration) {
             let group_label = format_group_display(&result.group, &result.group_icon);
             println!("  ✗ {} - {}", result.name.red(), group_label.dimmed());
             if let Some(output) = &result.output
-                && !output.is_empty() {
-                    println!("    {}", output.dimmed());
-                }
+                && !output.is_empty()
+            {
+                println!("    {}", output.dimmed());
+            }
         }
     }
 }

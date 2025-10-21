@@ -134,8 +134,10 @@ mod tests {
     fn test_notification_manager_disabled() {
         let manager = NotificationManager::new(false);
         // Should not error even when disabled
-        assert!(manager
-            .notify_interactive_input_detected("test", "group")
-            .is_ok());
+        assert!(
+            manager
+                .notify_interactive_input_detected("test", "group")
+                .is_ok()
+        );
     }
 }
