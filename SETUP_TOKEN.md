@@ -1,39 +1,42 @@
-# ⚠️ Wichtig: GitHub Secret einrichten
+# ⚠️ Important: Setup GitHub Secret
 
-Damit die automatische Homebrew Formula Aktualisierung funktioniert, muss noch ein GitHub Token erstellt werden:
+For automatic Homebrew Formula updates to work, a GitHub Token needs to be created:
 
-## Schnell-Anleitung:
+## Quick Guide:
 
-### 1. Token erstellen
+### 1. Create Token
+
 ```
 https://github.com/settings/tokens/new
 ```
 
 - **Name:** `Homebrew Tap Update`
-- **Berechtigung:** ✅ `repo` (volle Kontrolle)
-- Token kopieren!
+- **Permission:** ✅ `repo` (full control)
+- Copy the token!
 
-### 2. Secret hinzufügen
+### 2. Add Secret
+
 ```
 https://github.com/BreathCodeFlow/tide/settings/secrets/actions/new
 ```
 
 - **Name:** `HOMEBREW_TAP_TOKEN`
-- **Value:** [Token einfügen]
+- **Value:** [Paste token]
 
-## Danach funktioniert:
+## Then it works:
 
 ```bash
 git tag -a v1.3.0 -m "Release v1.3.0"
 git push --tags
 ```
 
-→ Automatisch:
-- ✅ Builds erstellen
-- ✅ Release auf GitHub
-- ✅ Homebrew Formula aktualisiert
-- ✅ SHA256-Checksums berechnet
+→ Automatically:
+
+- ✅ Create builds
+- ✅ Release on GitHub
+- ✅ Update Homebrew Formula
+- ✅ Calculate SHA256 checksums
 
 ---
 
-**Vollständige Dokumentation:** [.github/workflows/README.md](.github/workflows/README.md)
+**Full Documentation:** [.github/workflows/README.md](.github/workflows/README.md)

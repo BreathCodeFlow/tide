@@ -57,7 +57,7 @@ Tide coordinates macOS software updates, Homebrew cleanups, and any custom shell
 ## Installation
 
 ```bash
-git clone https://github.com/markussommer/tide
+git clone https://github.com/BreathCodeFlow/tide
 cd tide
 
 cargo build --release

@@ -1,11 +1,11 @@
 [package]
 name = "tide"
-version = "1.2.0"
+version = "1.2.1"
 edition = "2021"
 authors = ["Markus Sommer"]
 description = "🌊 Tide - Refresh your system with the update wave"
 license = "MIT"
-repository = "https://github.com/markussommer/tide"
+repository = "https://github.com/BreathCodeFlow/tide"
 keywords = ["macos", "update", "maintenance", "automation", "cli"]
 categories = ["command-line-utilities"]
 
