@@ -1,7 +1,7 @@
 class Tide < Formula
   desc "🌊 An opinionated macOS maintenance orchestrator with an iocraft-powered interface"
   homepage "https://github.com/BreathCodeFlow/tide"
-  version "0.1.0"
+  version "1.2.0"
   license "MIT"
 
   on_macos do
