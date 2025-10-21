@@ -7,10 +7,10 @@ class Tide < Formula
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/BreathCodeFlow/tide/releases/download/v#{version}/tide-aarch64-apple-darwin.tar.gz"
-      sha256 "REPLACE_WITH_ACTUAL_SHA256_FOR_AARCH64"
+      sha256 "REPLACE_WITH_ACTUAL_SHA256_FOR_AARCH64" # aarch64
     else
       url "https://github.com/BreathCodeFlow/tide/releases/download/v#{version}/tide-x86_64-apple-darwin.tar.gz"
-      sha256 "REPLACE_WITH_ACTUAL_SHA256_FOR_X86_64"
+      sha256 "REPLACE_WITH_ACTUAL_SHA256_FOR_X86_64" # x86_64
     end
   end
 
