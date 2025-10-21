@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use colored::Colorize;
 use dialoguer::{theme::ColorfulTheme, Confirm, Password};
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
-use shellexpand;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -124,18 +123,17 @@ impl TaskExecutor {
         }
 
         // Optionally save password into keychain
-        if !keychain::entry_exists(keychain_label) {
-            if Confirm::with_theme(&ColorfulTheme::default())
+        if !keychain::entry_exists(keychain_label)
+            && Confirm::with_theme(&ColorfulTheme::default())
                 .with_prompt("Save password to keychain for future use?")
                 .default(true)
                 .interact()?
-            {
-                keychain::save_password(keychain_label, &password)?;
-                println!(
-                    "{}",
-                    "✓ Password saved to keychain (service: tide-sudo)".green()
-                );
-            }
+        {
+            keychain::save_password(keychain_label, &password)?;
+            println!(
+                "{}",
+                "✓ Password saved to keychain (service: tide-sudo)".green()
+            );
         }
 
         Ok(())
@@ -253,7 +251,7 @@ impl TaskExecutor {
         }
 
         // Execute command
-        let result = if cmd.get(0).map(|s| s.as_str()) == Some("sudo") {
+        let result = if cmd.first().map(|s| s.as_str()) == Some("sudo") {
             self.run_sudo_command(&cmd[1..], keychain_label).await
         } else {
             self.run_command(&cmd, &task, &task_name, &group_name).await
@@ -412,14 +410,13 @@ impl TaskExecutor {
         }
 
         // 4. Optionally save password into keychain
-        if !keychain::entry_exists(keychain_label) {
-            if Confirm::with_theme(&ColorfulTheme::default())
+        if !keychain::entry_exists(keychain_label)
+            && Confirm::with_theme(&ColorfulTheme::default())
                 .with_prompt("Save password to keychain for future use?")
                 .default(true)
                 .interact()?
-            {
-                keychain::save_password(keychain_label, &password)?;
-            }
+        {
+            keychain::save_password(keychain_label, &password)?;
         }
 
         run_actual(args)

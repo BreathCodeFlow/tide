@@ -34,7 +34,7 @@ pub fn display_system_info() -> Result<()> {
     println!("{}", "─".repeat(DIVIDER_WIDTH).dimmed());
 
     // Disk space
-    if let Ok(output) = Command::new("df").args(&["-h", "/"]).output() {
+    if let Ok(output) = Command::new("df").args(["-h", "/"]).output() {
         if output.status.success() {
             let lines = String::from_utf8_lossy(&output.stdout);
             if let Some(line) = lines.lines().nth(1) {
@@ -52,7 +52,7 @@ pub fn display_system_info() -> Result<()> {
     }
 
     // Battery status
-    if let Ok(output) = Command::new("pmset").args(&["-g", "batt"]).output() {
+    if let Ok(output) = Command::new("pmset").args(["-g", "batt"]).output() {
         if output.status.success() {
             let info = String::from_utf8_lossy(&output.stdout);
             if let Some(line) = info.lines().nth(1) {

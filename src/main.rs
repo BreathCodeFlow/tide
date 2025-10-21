@@ -10,7 +10,6 @@ use anyhow::Result;
 use clap::Parser;
 use colored::Colorize;
 use dialoguer::{theme::ColorfulTheme, Confirm};
-use dirs;
 use futures::future::join_all;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -203,10 +202,8 @@ async fn main() -> Result<()> {
         }
 
         let parallel_results = join_all(handles).await;
-        for result in parallel_results {
-            if let Ok(task_result) = result {
-                results.push(task_result);
-            }
+        for task_result in parallel_results.into_iter().flatten() {
+            results.push(task_result);
         }
     }
 
@@ -265,14 +262,13 @@ fn init_config(path: Option<&PathBuf>) -> Result<()> {
     fs::create_dir_all(&config_dir)?;
     let config_path = config_dir.join("config.toml");
 
-    if config_path.exists() {
-        if !Confirm::with_theme(&ColorfulTheme::default())
+    if config_path.exists()
+        && !Confirm::with_theme(&ColorfulTheme::default())
             .with_prompt("Config file already exists. Overwrite?")
             .default(false)
             .interact()?
-        {
-            return Ok(());
-        }
+    {
+        return Ok(());
     }
 
     let default_config = Config::default();

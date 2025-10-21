@@ -4,7 +4,7 @@ use std::process::{Command, Stdio};
 /// Check if a keychain entry exists
 pub fn entry_exists(label: &str) -> bool {
     Command::new("security")
-        .args(&["find-generic-password", "-s", label, "-a", "root"])
+        .args(["find-generic-password", "-s", label, "-a", "root"])
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
@@ -15,7 +15,7 @@ pub fn entry_exists(label: &str) -> bool {
 /// Get password from keychain
 pub fn get_password(label: &str) -> Result<String> {
     let output = Command::new("security")
-        .args(&["find-generic-password", "-s", label, "-a", "root", "-w"])
+        .args(["find-generic-password", "-s", label, "-a", "root", "-w"])
         .output()?;
 
     if output.status.success() {
@@ -28,7 +28,7 @@ pub fn get_password(label: &str) -> Result<String> {
 /// Save password to keychain
 pub fn save_password(label: &str, password: &str) -> Result<()> {
     let status = Command::new("security")
-        .args(&[
+        .args([
             "add-generic-password",
             "-s",
             label,
