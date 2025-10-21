@@ -10,10 +10,36 @@ show_progress = true           # Show progress bars for tasks
 parallel_execution = false     # Enable parallel execution globally
 parallel_limit = 4             # Max number of parallel tasks
 skip_optional_on_error = false # Skip optional tasks if a required task fails
-keychain_label = "tide-sudo"   # For storing sudo password in keychain
+keychain_label = "tide-sudo"   # For storing sudo password in keychain (macOS Keychain)
 use_colors = true              # Enable colored output
 verbose = false                # Show detailed output
 log_file = ""                  # Optional: Path to log file
+desktop_notifications = true   # Enable macOS desktop notifications
+
+# ============================================================================
+# IMPORTANT: Timeout and Sudo Configuration
+# ============================================================================
+# 
+# All tasks have a default timeout of 300 seconds (5 minutes) to prevent
+# hanging on password prompts or other interactive input. 
+#
+# If a command needs sudo, SET "sudo = true" in the task config!
+# This prevents the command from hanging on password prompts.
+#
+# Example of a command that would hang WITHOUT proper configuration:
+#   command = ["some-script.sh"]  # internally calls sudo
+#   # This would HANG! Solution: set "sudo = true"
+#
+# Stdin is automatically redirected to /dev/null for all non-sudo commands
+# to prevent blocking on interactive input.
+#
+# Desktop Notifications (desktop_notifications):
+# When enabled, Tide will send macOS notifications for:
+# - Tasks waiting for interactive input (detected via timeout)
+# - Sudo password required (check your terminal!)
+# - Task failures (required tasks only)
+# - All tasks completed successfully
+# ============================================================================
 
 # ============================================================================
 # SYSTEM & CORE UPDATES

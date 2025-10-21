@@ -3,6 +3,7 @@ mod config;
 mod error;
 mod executor;
 mod keychain;
+mod notifications;
 mod ui;
 
 use anyhow::Result;
@@ -112,6 +113,7 @@ async fn main() -> Result<()> {
     let executor = Arc::new(TaskExecutor::new(
         args.dry_run,
         args.verbose || config.settings.verbose,
+        config.settings.desktop_notifications && !args.quiet,
     ));
     let start_time = Instant::now();
     let mut results = Vec::new();
@@ -121,6 +123,32 @@ async fn main() -> Result<()> {
         .keychain_label
         .as_deref()
         .unwrap_or("tide-sudo");
+
+    // Pre-authenticate sudo to prevent tasks from hanging
+    // This helps even if tasks don't have sudo: true but internally call sudo
+    // We do this proactively unless in dry-run mode
+    if !args.dry_run && !args.quiet {
+        // Only attempt if sudo is available and we're not running quietly
+        if keychain::command_exists("sudo") {
+            match executor.ensure_sudo_auth(keychain_label).await {
+                Ok(_) => {
+                    // Successfully authenticated or timestamp was valid
+                }
+                Err(e) => {
+                    // Sudo auth failed - warn but don't exit
+                    // Some tasks might not need sudo
+                    eprintln!(
+                        "{}",
+                        format!("⚠️  Sudo authentication failed: {}", e).yellow()
+                    );
+                    eprintln!(
+                        "{}",
+                        "   Tasks requiring sudo may fail or timeout.".yellow()
+                    );
+                }
+            }
+        }
+    }
 
     let mut sequential_tasks = Vec::new();
     let mut parallel_tasks = Vec::new();
@@ -184,6 +212,22 @@ async fn main() -> Result<()> {
 
     let total_duration = start_time.elapsed();
     display_results(&results, total_duration);
+
+    // Send completion notification if all tasks succeeded
+    let success_count = results
+        .iter()
+        .filter(|r| r.status == TaskStatus::Success)
+        .count();
+    let failed_count = results
+        .iter()
+        .filter(|r| r.status == TaskStatus::Failed)
+        .count();
+
+    if failed_count == 0 && success_count > 0 {
+        let _ = executor
+            .notifier
+            .notify_all_tasks_complete(success_count, total_duration.as_secs());
+    }
 
     if !args.quiet && config.settings.show_system_info {
         ui::display_system_info()?;

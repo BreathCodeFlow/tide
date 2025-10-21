@@ -40,6 +40,14 @@ Tide coordinates macOS software updates, Homebrew cleanups, and any custom shell
 - Optional fail-fast behaviour that halts optional work after a required task fails.
 - Verbose logging for debugging plus quiet mode for automation owners.
 
+### Desktop Notifications 🔔
+
+- **Interactive Input Detection** – Get notified when a task appears to be waiting for input (timeout detected).
+- **Sudo Password Required** – Desktop alert when sudo authentication is needed (check your terminal!).
+- **Task Failures** – Instant notification when required tasks fail with error preview.
+- **Completion Summary** – Success notification when all tasks complete successfully.
+- **Configurable** – Can be disabled via `desktop_notifications = false` in config or `--quiet` flag.
+
 ## Requirements
 
 - macOS (tested on Apple Silicon; Intel should work as long as the commands you call are available).
@@ -102,6 +110,7 @@ skip_optional_on_error = false
 keychain_label = "tide-sudo"
 verbose = false
 log_file = ""                  # Optional: capture command output
+desktop_notifications = true   # Enable macOS desktop notifications
 
 [[groups]]
 name = "System Updates"
@@ -136,9 +145,62 @@ parallel = false
 - `sudo` – Tide handles authentication and optional Keychain storage.
 - `enabled` – Toggle tasks on/off without deleting them.
 - `check_command` / `check_path` – Skip tasks automatically when prerequisites are missing.
-- `timeout` – Abort long-running commands (seconds).
+- `timeout` – Abort long-running commands (seconds). Default: 300 seconds (5 minutes).
 - `env` – Command-specific environment overrides.
 - `working_dir` – Set the working directory (supports `~`).
+
+### Protection Against Hanging Commands
+
+Tide includes built-in protections to prevent tasks from hanging:
+
+1. **Stdin Redirection**: All regular commands have stdin redirected to `/dev/null`, preventing them from blocking on password prompts or other interactive input.
+
+2. **Default Timeout**: Commands without an explicit `timeout` value will be automatically terminated after 5 minutes to prevent indefinite hanging.
+
+3. **Proactive Sudo Pre-Authentication**: Tide **always** attempts to pre-authenticate sudo at startup (unless in dry-run mode). This protects against scripts that internally call sudo without being marked with `sudo: true`.
+
+   ```bash
+   # At startup, you'll see:
+   🔐 Some tasks may require sudo privileges.
+   Enter sudo password (or press Ctrl+C to skip):
+   ```
+
+   - If you have the password in keychain, it's used automatically
+   - You can skip authentication (Ctrl+C or empty password)
+   - Password can be saved to macOS Keychain for future runs
+
+4. **Heuristic Warnings**: In verbose mode, Tide warns if a command contains "sudo" but isn't marked with `sudo: true`.
+
+5. **Helpful Error Messages**: If a command times out, Tide provides actionable error messages suggesting to set `sudo: true` or adjust the `timeout` value.
+
+**Important Use Cases:**
+
+✅ **Script with internal sudo** - Works even without `sudo: true` thanks to proactive auth:
+
+```toml
+[[groups.tasks]]
+name = "Maintenance Script"
+command = ["./scripts/cleanup.sh"]  # internally calls sudo
+# Works because sudo is pre-authenticated!
+```
+
+✅ **Explicit sudo task** - Best practice for clarity:
+
+```toml
+[[groups.tasks]]
+name = "System Update"
+command = ["brew", "upgrade"]
+sudo = true  # Clear and explicit
+```
+
+❌ **Interactive command** - Will timeout:
+
+```toml
+[[groups.tasks]]
+name = "Bad Example"
+command = ["./interactive-tool"]  # asks questions
+# Will hang and timeout after 5 minutes!
+```
 
 ## Examples
 

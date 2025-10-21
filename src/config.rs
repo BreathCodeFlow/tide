@@ -39,6 +39,8 @@ pub struct Settings {
     pub verbose: bool,
     #[serde(default)]
     pub log_file: Option<String>,
+    #[serde(default = "default_true")]
+    pub desktop_notifications: bool,
 }
 
 impl Default for Settings {
@@ -55,6 +57,7 @@ impl Default for Settings {
             use_colors: true,
             verbose: false,
             log_file: None,
+            desktop_notifications: true,
         }
     }
 }

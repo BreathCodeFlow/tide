@@ -10,6 +10,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::TaskConfig;
 use crate::keychain;
+use crate::notifications::NotificationManager;
 
 /// Task execution result
 #[derive(Debug)]
@@ -36,16 +37,108 @@ pub struct TaskExecutor {
     pub multi_progress: Arc<MultiProgress>,
     pub dry_run: bool,
     pub verbose: bool,
+    pub notifier: Arc<NotificationManager>,
 }
 
 impl TaskExecutor {
     /// Create a new task executor
-    pub fn new(dry_run: bool, verbose: bool) -> Self {
+    pub fn new(dry_run: bool, verbose: bool, notifications_enabled: bool) -> Self {
         Self {
             multi_progress: Arc::new(MultiProgress::new()),
             dry_run,
             verbose,
+            notifier: Arc::new(NotificationManager::new(notifications_enabled)),
         }
+    }
+
+    /// Ensure sudo authentication is valid before executing tasks
+    /// This prevents tasks from hanging on password prompts
+    /// Returns Ok if auth succeeded or was already valid
+    /// Returns Err only if user provided wrong password
+    pub async fn ensure_sudo_auth(&self, keychain_label: &str) -> Result<()> {
+        // Check if sudo timestamp is already cached
+        if Command::new("sudo")
+            .arg("-n")
+            .arg("true")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+        {
+            if self.verbose {
+                println!("{}", "✓ Sudo timestamp already valid".green());
+            }
+            return Ok(());
+        }
+
+        // Try keychain password to refresh sudo timestamp
+        if let Ok(password) = keychain::get_password(keychain_label) {
+            if authenticate_sudo(&password).await? {
+                if self.verbose {
+                    println!("{}", "✓ Sudo authenticated via keychain".green());
+                }
+                return Ok(());
+            } else {
+                // Keychain password is wrong/outdated - we'll prompt
+                if self.verbose {
+                    println!(
+                        "{}",
+                        "⚠️  Keychain password is outdated, prompting for new password".yellow()
+                    );
+                }
+            }
+        }
+
+        // Prompt user for password
+        println!(
+            "{}",
+            "🔐 Some tasks may require sudo privileges.".bright_blue()
+        );
+
+        // Send desktop notification
+        let _ = self.notifier.notify_sudo_required();
+
+        let password = match Password::with_theme(&ColorfulTheme::default())
+            .with_prompt("Enter sudo password (or press Ctrl+C to skip)")
+            .allow_empty_password(true)
+            .interact()
+        {
+            Ok(pwd) if pwd.is_empty() => {
+                println!("{}", "Skipping sudo authentication.".yellow());
+                return Err(anyhow::anyhow!("User skipped sudo authentication"));
+            }
+            Ok(pwd) => pwd,
+            Err(_) => {
+                println!("{}", "Sudo authentication cancelled.".yellow());
+                return Err(anyhow::anyhow!("User cancelled sudo authentication"));
+            }
+        };
+
+        if !authenticate_sudo(&password).await? {
+            return Err(anyhow::anyhow!("Invalid sudo password"));
+        }
+
+        if self.verbose {
+            println!("{}", "✓ Sudo authenticated successfully".green());
+        }
+
+        // Optionally save password into keychain
+        if !keychain::entry_exists(keychain_label) {
+            if Confirm::with_theme(&ColorfulTheme::default())
+                .with_prompt("Save password to keychain for future use?")
+                .default(true)
+                .interact()?
+            {
+                keychain::save_password(keychain_label, &password)?;
+                println!(
+                    "{}",
+                    "✓ Password saved to keychain (service: tide-sudo)".green()
+                );
+            }
+        }
+
+        Ok(())
     }
 
     /// Create a configured spinner progress bar
@@ -144,16 +237,37 @@ impl TaskExecutor {
             cmd.insert(0, "sudo".to_string());
         }
 
+        // Warn if command might internally call sudo (heuristic check)
+        if !task.sudo && self.verbose && !cmd.is_empty() {
+            let cmd_str = cmd.join(" ").to_lowercase();
+            if cmd_str.contains("sudo") {
+                pb.println(format!(
+                    "{}",
+                    format!(
+                        "⚠️  Task '{}' may call sudo internally. Consider setting 'sudo: true'",
+                        task_name
+                    )
+                    .yellow()
+                ));
+            }
+        }
+
         // Execute command
         let result = if cmd.get(0).map(|s| s.as_str()) == Some("sudo") {
             self.run_sudo_command(&cmd[1..], keychain_label).await
         } else {
-            self.run_command(&cmd, &task).await
+            self.run_command(&cmd, &task, &task_name, &group_name).await
         };
 
         let (status, output) = match result {
             Ok(output) => (TaskStatus::Success, Some(output)),
-            Err(e) if task.required => (TaskStatus::Failed, Some(e.to_string())),
+            Err(e) if task.required => {
+                // Send notification for failed required task
+                let _ = self
+                    .notifier
+                    .notify_task_failed(&task_name, &group_name, &e.to_string());
+                (TaskStatus::Failed, Some(e.to_string()))
+            }
             Err(e) => (TaskStatus::Skipped, Some(e.to_string())),
         };
 
@@ -182,7 +296,13 @@ impl TaskExecutor {
     }
 
     /// Run a regular command
-    async fn run_command(&self, cmd: &[String], task: &TaskConfig) -> Result<String> {
+    async fn run_command(
+        &self,
+        cmd: &[String],
+        task: &TaskConfig,
+        task_name: &str,
+        group_name: &str,
+    ) -> Result<String> {
         if cmd.is_empty() {
             return Err(anyhow::anyhow!("Empty command"));
         }
@@ -201,11 +321,38 @@ impl TaskExecutor {
             command.env(key, value);
         }
 
+        // CRITICAL: Redirect stdin to /dev/null to prevent blocking on password prompts
+        // This prevents commands from hanging if they internally require interactive input
+        command.stdin(Stdio::null());
+
         if !self.verbose {
             command.stdout(Stdio::piped()).stderr(Stdio::piped());
         }
 
-        let output = command.output()?;
+        // Apply timeout if specified in task config
+        let command_future = tokio::task::spawn_blocking(move || command.output());
+        let timeout_secs = task.timeout.unwrap_or(300);
+
+        let output = match tokio::time::timeout(Duration::from_secs(timeout_secs), command_future)
+            .await
+        {
+            Ok(Ok(result)) => result?,
+            Ok(Err(e)) => return Err(anyhow::anyhow!("Command execution error: {}", e)),
+            Err(_) => {
+                // Send notification that task timed out (likely waiting for input)
+                let _ = self
+                    .notifier
+                    .notify_interactive_input_detected(task_name, group_name);
+                let _ = self
+                    .notifier
+                    .notify_task_timeout(task_name, group_name, timeout_secs);
+
+                return Err(anyhow::anyhow!(
+                    "Command timed out after {} seconds. This may indicate the command is waiting for input (like sudo password). Consider setting 'sudo: true' or 'timeout: <seconds>' in the task config.",
+                    timeout_secs
+                ));
+            }
+        };
 
         if output.status.success() {
             Ok(String::from_utf8_lossy(&output.stdout).to_string())
