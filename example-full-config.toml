@@ -13,7 +13,7 @@ skip_optional_on_error = false # Skip optional tasks if a required task fails
 keychain_label = "tide-sudo"   # For storing sudo password in keychain (macOS Keychain)
 use_colors = true              # Enable colored output
 verbose = false                # Show detailed output
-log_file = ""                  # Optional: Path to log file
+log_file = "~/.config/tide/tide.log"  # Optional: capture command output (relative paths allowed)
 desktop_notifications = true   # Enable macOS desktop notifications
 
 # ============================================================================

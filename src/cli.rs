@@ -46,8 +46,4 @@ pub struct Args {
     /// Enable verbose output
     #[arg(short, long)]
     pub verbose: bool,
-
-    /// Show version information
-    #[arg(short = 'V', long)]
-    pub version: bool,
 }

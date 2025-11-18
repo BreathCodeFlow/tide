@@ -62,6 +62,16 @@ impl Default for Settings {
     }
 }
 
+impl Settings {
+    /// Return the configured log file path, ignoring empty values.
+    pub fn log_file_path(&self) -> Option<&str> {
+        self.log_file
+            .as_deref()
+            .map(str::trim)
+            .filter(|path| !path.is_empty())
+    }
+}
+
 /// Task group configuration
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TaskGroup {

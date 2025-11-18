@@ -3,6 +3,7 @@ mod config;
 mod error;
 mod executor;
 mod keychain;
+mod logger;
 mod notifications;
 mod ui;
 
@@ -11,6 +12,8 @@ use clap::Parser;
 use colored::Colorize;
 use dialoguer::{Confirm, theme::ColorfulTheme};
 use futures::future::join_all;
+use std::env;
+use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -18,8 +21,9 @@ use std::time::{Duration, Instant};
 use tokio::sync::Semaphore;
 
 use cli::Args;
-use config::Config;
+use config::{Config, Settings};
 use executor::{TaskExecutor, TaskResult, TaskStatus};
+use logger::Logger;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -44,6 +48,19 @@ async fn main() -> Result<()> {
     }
 
     setup_environment();
+
+    let logger = match init_logger(&config.settings, &config_path)? {
+        Some((logger, path)) => {
+            if !args.quiet {
+                println!(
+                    "{}",
+                    format!("📝 Task output will be logged to {}", path.display()).dimmed()
+                );
+            }
+            Some(logger)
+        }
+        None => None,
+    };
 
     let weather_task = if !args.quiet && config.settings.show_weather {
         Some(tokio::spawn(ui::fetch_weather()))
@@ -109,10 +126,13 @@ async fn main() -> Result<()> {
         }
     }
 
+    let show_progress = config.settings.show_progress && !args.quiet;
     let executor = Arc::new(TaskExecutor::new(
         args.dry_run,
         args.verbose || config.settings.verbose,
         config.settings.desktop_notifications && !args.quiet,
+        show_progress,
+        logger.clone(),
     ));
     let start_time = Instant::now();
     let mut results = Vec::new();
@@ -248,6 +268,25 @@ fn display_config_path(path: &Path) -> Result<()> {
         path.display()
     );
     Ok(())
+}
+
+fn init_logger(settings: &Settings, config_path: &Path) -> Result<Option<(Arc<Logger>, PathBuf)>> {
+    let raw_path = match settings.log_file_path() {
+        Some(path) => path,
+        None => return Ok(None),
+    };
+
+    let expanded = shellexpand::tilde(raw_path);
+    let mut resolved = PathBuf::from(expanded.as_ref());
+
+    if resolved.is_relative() {
+        if let Some(parent) = config_path.parent() {
+            resolved = parent.join(resolved);
+        }
+    }
+
+    let logger = Arc::new(Logger::new(&resolved)?);
+    Ok(Some((logger, resolved)))
 }
 
 fn init_config(path: Option<&PathBuf>) -> Result<()> {
@@ -405,22 +444,34 @@ fn display_results(results: &[TaskResult], total_duration: Duration) {
 
 fn setup_environment() {
     if Path::new("/opt/homebrew/bin/brew").exists() {
-        let path = std::env::var("PATH").unwrap_or_default();
-        unsafe {
-            std::env::set_var("PATH", format!("/opt/homebrew/bin:{}", path));
-        }
+        prepend_to_path("/opt/homebrew/bin");
     } else if Path::new("/usr/local/bin/brew").exists() {
-        let path = std::env::var("PATH").unwrap_or_default();
-        unsafe {
-            std::env::set_var("PATH", format!("/usr/local/bin:{}", path));
-        }
+        prepend_to_path("/usr/local/bin");
     }
 
     if let Some(home) = dirs::home_dir() {
-        let path = std::env::var("PATH").unwrap_or_default();
-        unsafe {
-            std::env::set_var("PATH", format!("{}/.local/bin:{}", home.display(), path));
+        let local_bin = home.join(".local/bin");
+        if local_bin.exists() {
+            prepend_to_path(local_bin);
         }
+    }
+}
+
+fn prepend_to_path<P: AsRef<Path>>(dir: P) {
+    let dir = dir.as_ref();
+    if !dir.exists() {
+        return;
+    }
+
+    let mut new_path = OsString::from(dir.as_os_str());
+    if let Some(current) = env::var_os("PATH") {
+        if !current.is_empty() {
+            new_path.push(":");
+            new_path.push(current);
+        }
+    }
+    unsafe {
+        env::set_var("PATH", new_path);
     }
 }
 

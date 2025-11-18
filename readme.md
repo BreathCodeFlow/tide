@@ -39,6 +39,7 @@ Tide coordinates macOS software updates, Homebrew cleanups, and any custom shell
 - Dry-run mode to preview commands with zero side effects.
 - Optional fail-fast behaviour that halts optional work after a required task fails.
 - Verbose logging for debugging plus quiet mode for automation owners.
+- Structured run logs when `log_file` is set—every task start/stop and trimmed output is written to disk for later review.
 
 ### Desktop Notifications 🔔
 
@@ -109,7 +110,7 @@ parallel_limit = 4
 skip_optional_on_error = false
 keychain_label = "tide-sudo"
 verbose = false
-log_file = ""                  # Optional: capture command output
+log_file = "~/.config/tide/tide.log"  # Optional: capture command output
 desktop_notifications = true   # Enable macOS desktop notifications
 
 [[groups]]
@@ -137,6 +138,8 @@ parallel = false
   check_command = "mas"
   timeout = 600
 ```
+
+Set `show_progress = false` if you prefer plain log lines instead of spinner-based updates—handy for CI logs or when capturing all details via the log file.
 
 ### Task Fields
 
@@ -201,6 +204,10 @@ name = "Bad Example"
 command = ["./interactive-tool"]  # asks questions
 # Will hang and timeout after 5 minutes!
 ```
+
+### Logging
+
+Set `log_file` under `[settings]` to capture a full transcript of the run. Relative paths are resolved relative to the config file, tilde-expansion (`~`) is supported, and directories are created automatically. Each entry records the timestamp, group/task name, status, runtime, and a trimmed copy of any captured output so you can audit what happened without scrolling back through your terminal scrollback.
 
 ## Examples
 

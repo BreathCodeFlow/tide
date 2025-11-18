@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::TaskConfig;
 use crate::keychain;
+use crate::logger::Logger;
 use crate::notifications::NotificationManager;
 
 /// Task execution result
@@ -33,20 +34,97 @@ pub enum TaskStatus {
 /// Task executor with progress tracking
 #[derive(Clone)]
 pub struct TaskExecutor {
-    pub multi_progress: Arc<MultiProgress>,
+    pub multi_progress: Option<Arc<MultiProgress>>,
     pub dry_run: bool,
     pub verbose: bool,
     pub notifier: Arc<NotificationManager>,
+    logger: Option<Arc<Logger>>,
+    show_progress: bool,
 }
 
 impl TaskExecutor {
     /// Create a new task executor
-    pub fn new(dry_run: bool, verbose: bool, notifications_enabled: bool) -> Self {
+    pub fn new(
+        dry_run: bool,
+        verbose: bool,
+        notifications_enabled: bool,
+        show_progress: bool,
+        logger: Option<Arc<Logger>>,
+    ) -> Self {
         Self {
-            multi_progress: Arc::new(MultiProgress::new()),
+            multi_progress: show_progress.then(|| Arc::new(MultiProgress::new())),
             dry_run,
             verbose,
             notifier: Arc::new(NotificationManager::new(notifications_enabled)),
+            logger,
+            show_progress,
+        }
+    }
+
+    fn update_progress(&self, pb: &ProgressBar, message: &str) {
+        if self.show_progress {
+            pb.set_message(message.to_string());
+        } else {
+            println!("{}", message);
+        }
+    }
+
+    fn finish_progress(&self, pb: &ProgressBar, message: &str) {
+        if self.show_progress {
+            pb.finish_with_message(message.to_string());
+        } else {
+            println!("{}", message);
+        }
+    }
+
+    fn log_line(&self, message: String) {
+        if let Some(logger) = &self.logger {
+            if let Err(err) = logger.log_line(&message) {
+                if self.verbose {
+                    eprintln!("{}", format!("Failed to write log entry: {}", err).yellow());
+                }
+            }
+        }
+    }
+
+    fn log_task_completion(
+        &self,
+        group_label: &str,
+        task_label: &str,
+        status: TaskStatus,
+        duration: Duration,
+        output: Option<&str>,
+    ) {
+        if self.logger.is_none() {
+            return;
+        }
+
+        let status_prefix = match status {
+            TaskStatus::Success => "✓ SUCCESS",
+            TaskStatus::Failed => "✗ FAILED",
+            TaskStatus::Skipped => "○ SKIPPED",
+        };
+        self.log_line(format!(
+            "{} [{}] {} ({})",
+            status_prefix,
+            group_label,
+            task_label,
+            format_duration(duration)
+        ));
+
+        if let Some(output) = output {
+            let trimmed = output.trim();
+            if trimmed.is_empty() {
+                return;
+            }
+            if let Some(logger) = &self.logger {
+                let header = format!("└ output [{}] {}", group_label, task_label);
+                if let Err(err) = logger.log_block(&header, trimmed) {
+                    if self.verbose {
+                        eprintln!("{}", format!("Failed to write log entry: {}", err).yellow());
+                    }
+                }
+            }
         }
     }
 
@@ -141,14 +219,18 @@ impl TaskExecutor {
 
     /// Create a configured spinner progress bar
     pub fn new_spinner(&self) -> ProgressBar {
-        let pb = self.multi_progress.add(ProgressBar::new_spinner());
-        pb.set_style(
-            ProgressStyle::with_template("{spinner:.cyan} {msg}")
-                .unwrap()
-                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
-        );
-        pb.enable_steady_tick(Duration::from_millis(120));
-        pb
+        if let Some(multi) = &self.multi_progress {
+            let pb = multi.add(ProgressBar::new_spinner());
+            pb.set_style(
+                ProgressStyle::with_template("{spinner:.cyan} {msg}")
+                    .unwrap()
+                    .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]),
+            );
+            pb.enable_steady_tick(Duration::from_millis(120));
+            pb
+        } else {
+            ProgressBar::hidden()
+        }
     }
 
     /// Execute a single task
@@ -165,29 +247,48 @@ impl TaskExecutor {
         let group_label = format_group_label(&group_name, &group_icon);
         let task_label = format_task_label(&task_name, &task.icon);
         let progress_label = format!("[{}] {}", group_label, task_label);
+        let running_message = format!("{} {}", progress_label.bold(), "Running…".bright_white());
+        self.update_progress(&pb, &running_message);
 
-        // Update progress bar
-        pb.set_message(format!(
-            "{} {}",
-            progress_label.clone().bold(),
-            "Running…".bright_white()
+        let mut cmd = task.command.clone();
+        if task.sudo && !cmd.is_empty() && cmd[0] != "sudo" {
+            cmd.insert(0, "sudo".to_string());
+        }
+        let command_display = if cmd.is_empty() {
+            "<empty command>".to_string()
+        } else {
+            cmd.join(" ")
+        };
+        self.log_line(format!(
+            "▶ [{}] {} :: {}",
+            group_label, task_label, command_display
         ));
 
         if self.dry_run {
             tokio::time::sleep(Duration::from_millis(100)).await;
-            pb.finish_with_message(format!(
+            let dry_run_msg = format!(
                 "{} {} {}",
-                progress_label.clone().bold(),
+                progress_label.bold(),
                 "○".yellow(),
                 "[dry run]".dimmed()
-            ));
+            );
+            self.finish_progress(&pb, &dry_run_msg);
+            let duration = start.elapsed();
+            let reason = "Dry run - command not executed".to_string();
+            self.log_task_completion(
+                &group_label,
+                &task_label,
+                TaskStatus::Skipped,
+                duration,
+                Some(reason.as_str()),
+            );
             return TaskResult {
                 name: task_name.clone(),
                 group: group_name,
                 group_icon,
                 status: TaskStatus::Skipped,
-                duration: start.elapsed(),
-                output: Some("Dry run - command not executed".to_string()),
+                duration,
+                output: Some(reason),
             };
         }
 
@@ -195,44 +296,58 @@ impl TaskExecutor {
         if let Some(check_cmd) = &task.check_command
             && !keychain::command_exists(check_cmd)
         {
-            pb.finish_with_message(format!(
+            let skip_msg = format!(
                 "{} {}",
-                progress_label.clone().bold(),
+                progress_label.bold(),
                 "[skipped: command not found]".dimmed()
-            ));
+            );
+            self.finish_progress(&pb, &skip_msg);
+            let duration = start.elapsed();
+            let reason = format!("Command '{}' not found", check_cmd);
+            self.log_task_completion(
+                &group_label,
+                &task_label,
+                TaskStatus::Skipped,
+                duration,
+                Some(reason.as_str()),
+            );
             return TaskResult {
                 name: task_name.clone(),
                 group: group_name,
                 group_icon,
                 status: TaskStatus::Skipped,
-                duration: start.elapsed(),
-                output: Some(format!("Command '{}' not found", check_cmd)),
+                duration,
+                output: Some(reason),
             };
         }
 
         if let Some(check_path) = &task.check_path {
             let expanded = shellexpand::tilde(check_path);
             if !Path::new(expanded.as_ref()).exists() {
-                pb.finish_with_message(format!(
+                let skip_msg = format!(
                     "{} {}",
-                    progress_label.clone().bold(),
+                    progress_label.bold(),
                     "[skipped: path not found]".dimmed()
-                ));
+                );
+                self.finish_progress(&pb, &skip_msg);
+                let duration = start.elapsed();
+                let reason = format!("Path '{}' not found", check_path);
+                self.log_task_completion(
+                    &group_label,
+                    &task_label,
+                    TaskStatus::Skipped,
+                    duration,
+                    Some(reason.as_str()),
+                );
                 return TaskResult {
                     name: task_name.clone(),
                     group: group_name,
                     group_icon,
                     status: TaskStatus::Skipped,
-                    duration: start.elapsed(),
-                    output: Some(format!("Path '{}' not found", check_path)),
+                    duration,
+                    output: Some(reason),
                 };
             }
-        }
-
-        // Build command
-        let mut cmd = task.command.clone();
-        if task.sudo && !cmd.is_empty() && cmd[0] != "sudo" {
-            cmd.insert(0, "sudo".to_string());
         }
 
         // Warn if command might internally call sudo (heuristic check)
@@ -276,12 +391,20 @@ impl TaskExecutor {
             TaskStatus::Skipped => "○".yellow(),
         };
 
-        pb.finish_with_message(format!(
+        let completion_message = format!(
             "{} {} {}",
             progress_label.bold(),
             status_icon,
             format!("({})", format_duration(duration)).dimmed()
-        ));
+        );
+        self.finish_progress(&pb, &completion_message);
+        self.log_task_completion(
+            &group_label,
+            &task_label,
+            status,
+            duration,
+            output.as_deref(),
+        );
 
         TaskResult {
             name: task_name,
