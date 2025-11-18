@@ -14,16 +14,7 @@ permissions:
 jobs:
   build:
     name: Build for macOS
-    strategy:
-      matrix:
-        include:
-          - target: x86_64-apple-darwin
-            os: macos-13
-            name: tide-x86_64-apple-darwin
-          - target: aarch64-apple-darwin
-            os: macos-14
-            name: tide-aarch64-apple-darwin
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -33,7 +24,7 @@ jobs:
         with:
           profile: minimal
           toolchain: stable
-          target: ${{ matrix.target }}
+          target: aarch64-apple-darwin
           override: true
 
       - name: Cache cargo registry
@@ -55,20 +46,20 @@ jobs:
           key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build
-        run: cargo build --release --target ${{ matrix.target }}
+        run: cargo build --release --target aarch64-apple-darwin
 
       - name: Create archive
         run: |
-          cd target/${{ matrix.target }}/release
-          tar czf ${{ matrix.name }}.tar.gz tide
-          shasum -a 256 ${{ matrix.name }}.tar.gz > ${{ matrix.name }}.tar.gz.sha256
+          cd target/aarch64-apple-darwin/release
+          tar czf tide.tar.gz tide
+          shasum -a 256 tide.tar.gz > tide.tar.gz.sha256
 
       - name: Upload Release Assets
         uses: softprops/action-gh-release@v1
         with:
           files: |
-            target/${{ matrix.target }}/release/${{ matrix.name }}.tar.gz
-            target/${{ matrix.target }}/release/${{ matrix.name }}.tar.gz.sha256
+            target/aarch64-apple-darwin/release/tide.tar.gz
+            target/aarch64-apple-darwin/release/tide.tar.gz.sha256
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -80,20 +71,14 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Update Homebrew formula
-        uses: dawidd6/action-homebrew-bump-formula@v4
+      - uses: mislav/bump-homebrew-formula-action@v3
         with:
-          # Required, custom personal GitHub access token with only the 'public_repo' scope enabled
-          token: ${{secrets.GITHUB_TOKEN}}
-          # Optional, will commit with this user name
-          user_name: BreathCodeFlow
-          # Optional, will commit with this user email
-          user_email: markus.sommer@fullhaus.de
-          # Bump all outdated formulae in this tap
-          tap: BreathCodeFlow/homebrew-tap
-          # Bump only these formulae if outdated
-          formula: tide
-          # Optional, if don't want to check for already open PRs
-          force: true # true
-          # Need to set this input if want to use `brew livecheck`
-          livecheck: true
+          formula-name: tide
+          formula-path: Formula/tide.rb
+          homebrew-tap: BreathCodeFlow/homebrew-tap
+          base-branch: main
+          download-url: https://github.com/BreathCodeFlow/tide/releases/download/${{ github.ref_name }}/tide.tar.gz
+          commit-message: |
+            {{formulaName}} {{version}}
+
+            Created by https://github.com/mislav/bump-homebrew-formula-action
