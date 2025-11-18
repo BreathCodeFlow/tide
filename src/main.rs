@@ -279,10 +279,8 @@ fn init_logger(settings: &Settings, config_path: &Path) -> Result<Option<(Arc<Lo
     let expanded = shellexpand::tilde(raw_path);
     let mut resolved = PathBuf::from(expanded.as_ref());
 
-    if resolved.is_relative() {
-        if let Some(parent) = config_path.parent() {
-            resolved = parent.join(resolved);
-        }
+    if resolved.is_relative() && let Some(parent) = config_path.parent() {
+        resolved = parent.join(resolved);
     }
 
     let logger = Arc::new(Logger::new(&resolved)?);
@@ -464,11 +462,9 @@ fn prepend_to_path<P: AsRef<Path>>(dir: P) {
     }
 
     let mut new_path = OsString::from(dir.as_os_str());
-    if let Some(current) = env::var_os("PATH") {
-        if !current.is_empty() {
-            new_path.push(":");
-            new_path.push(current);
-        }
+    if let Some(current) = env::var_os("PATH") && !current.is_empty() {
+        new_path.push(":");
+        new_path.push(current);
     }
     unsafe {
         env::set_var("PATH", new_path);

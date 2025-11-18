@@ -1,7 +1,7 @@
 class Tide < Formula
   desc "🌊 An opinionated macOS maintenance orchestrator"
   homepage "https://github.com/BreathCodeFlow/tide"
-  version "1.3.0"
+  version "1.3.1"
   license "MIT"
 
   # This in-repo formula is for local testing only. The official tap at

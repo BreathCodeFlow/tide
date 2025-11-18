@@ -78,12 +78,11 @@ impl TaskExecutor {
     }
 
     fn log_line(&self, message: String) {
-        if let Some(logger) = &self.logger {
-            if let Err(err) = logger.log_line(&message) {
-                if self.verbose {
-                    eprintln!("{}", format!("Failed to write log entry: {}", err).yellow());
-                }
-            }
+        if let Some(logger) = &self.logger
+            && let Err(err) = logger.log_line(&message)
+            && self.verbose
+        {
+            eprintln!("{}", format!("Failed to write log entry: {}", err).yellow());
         }
     }
 
@@ -117,13 +116,12 @@ impl TaskExecutor {
             if trimmed.is_empty() {
                 return;
             }
-            if let Some(logger) = &self.logger {
-                let header = format!("└ output [{}] {}", group_label, task_label);
-                if let Err(err) = logger.log_block(&header, trimmed) {
-                    if self.verbose {
-                        eprintln!("{}", format!("Failed to write log entry: {}", err).yellow());
-                    }
-                }
+            let header = format!("└ output [{}] {}", group_label, task_label);
+            if let Some(logger) = &self.logger
+                && let Err(err) = logger.log_block(&header, trimmed)
+                && self.verbose
+            {
+                eprintln!("{}", format!("Failed to write log entry: {}", err).yellow());
             }
         }
     }
